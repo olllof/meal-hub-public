@@ -3874,6 +3874,12 @@
  fetch('/api/data').then(r => r.json()).then(d => {
  data = d;
  render();
+ // Load costs on init too, in case the WebSocket never connects
+ // (e.g. on serverless hosts that don't support WebSockets)
+ if (!costsAutoLoaded) {
+ costsAutoLoaded = true;
+ loadCombinedCosts();
+ }
  });
  </script>
 </body>
