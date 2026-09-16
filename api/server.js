@@ -1067,6 +1067,17 @@ app.get("/api/order-costs", async (req, res) => {
 // MEAL INGREDIENTS & RECIPE SCRAPING
 // ============================================================================
 
+app.get("/api/ingredient-to-meals", async (req, res) => {
+  try {
+    const data = await loadData();
+    const allMeals = [...(data.orderMeals || []), ...(data.nextWeekMeals || [])];
+    const mapping = buildIngredientToMealsMap(allMeals, data.scrapedMeals || {});
+    res.json(mapping);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/meal-ingredients/:meal", (req, res) => {
   const meal = decodeURIComponent(req.params.meal);
   const ingredients = MEAL_INGREDIENTS[meal] || [];
