@@ -1,4 +1,6 @@
 const express = require("express");
+const crypto = require("crypto");
+const path = require("path");
 const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
@@ -12,6 +14,74 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const LOGIN_PASSWORD = "neel";
 
 app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+// ============================================================================
+// AUTH (stateless signed cookie - safe across serverless invocations)
+// ============================================================================
+
+const SESSION_SECRET = "meal-planner-secret";
+const COOKIE_NAME = "meal_auth";
+
+function signToken() {
+  return crypto.createHmac("sha256", SESSION_SECRET).update("authenticated").digest("hex");
+}
+
+function parseCookies(req) {
+  const header = req.headers.cookie || "";
+  const cookies = {};
+  header.split(";").forEach((pair) => {
+    const idx = pair.indexOf("=");
+    if (idx > -1) {
+      cookies[pair.slice(0, idx).trim()] = decodeURIComponent(pair.slice(idx + 1).trim());
+    }
+  });
+  return cookies;
+}
+
+function isAuthenticated(req) {
+  return parseCookies(req)[COOKIE_NAME] === signToken();
+}
+
+app.get("/login", (req, res) => {
+  res.sendFile(path.join(process.cwd(), "meal-hub-public", "login.html"));
+});
+
+app.post("/login", (req, res) => {
+  const { password } = req.body;
+  if (password === LOGIN_PASSWORD) {
+    res.setHeader(
+      "Set-Cookie",
+      `${COOKIE_NAME}=${signToken()}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${60 * 60 * 24 * 30}`
+    );
+    res.redirect("/");
+  } else {
+    res.redirect("/login?error=1");
+  }
+});
+
+app.get("/logout", (req, res) => {
+  res.setHeader("Set-Cookie", `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`);
+  res.redirect("/login");
+});
+
+const STATIC_ASSET_PATTERN = /\.(ttf|otf|woff2?|png|ico|svg|jpe?g|css|js)$/i;
+
+app.use((req, res, next) => {
+  const publicPaths = ["/login", "/logout", "/api/login"];
+  if (
+    isAuthenticated(req) ||
+    publicPaths.includes(req.path) ||
+    STATIC_ASSET_PATTERN.test(req.path)
+  ) {
+    return next();
+  }
+  if (req.path.startsWith("/api/")) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  return res.redirect("/login");
+});
+
 app.use(express.static("meal-hub-public"));
 
 // ============================================================================
