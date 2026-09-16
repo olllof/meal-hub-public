@@ -44,7 +44,7 @@ function isAuthenticated(req) {
 }
 
 app.get("/login", (req, res) => {
-  res.sendFile(path.join(process.cwd(), "meal-hub-public", "login.html"));
+  res.sendFile(path.join(process.cwd(), "meal-hub-public", "signin.html"));
 });
 
 app.post("/login", (req, res) => {
@@ -82,7 +82,15 @@ app.use((req, res, next) => {
   return res.redirect("/login");
 });
 
-app.use(express.static("meal-hub-public"));
+app.use(express.static("meal-hub-public", { index: false }));
+
+// Serve the app shell for any authenticated non-API, non-asset request
+// (there's no index.html on disk - it was renamed to app.html - so Vercel's
+// platform-level static/clean-URL serving can't intercept "/" before this
+// route runs and the auth middleware above gets a chance to gate it).
+app.get(/^(?!\/api\/).*/, (req, res) => {
+  res.sendFile(path.join(process.cwd(), "meal-hub-public", "app.html"));
+});
 
 // ============================================================================
 // STATIC DATA (classics, ingredients, translations)
