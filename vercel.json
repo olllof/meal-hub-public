@@ -12,7 +12,7 @@
     },
     {
       "src": "^/(?!api/)",
-      "dest": "/index.html"
+      "dest": "/api/index.js"
     }
   ]
 }
