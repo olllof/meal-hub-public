@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env.local
+.env.*.local
+meal-hub-data.json
+*.crt
+*.key
+node_modules/
+.vscode
+.idea
+README.md

@@ -1,0 +1,18 @@
+{
+  "scripts": {
+    "build": "echo 'No build needed'",
+    "start": "node meal-hub-server.js",
+    "dev": "node meal-hub-server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.116.0",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "node-cron": "^4.6.0",
+    "picnic-api": "^4.7.0",
+    "vercel": "^59.19.0"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "products": {
+    "Brot": "Schär Meisterbäckers Vital glutenfrei laktosefrei 350g",
+    "Joghurt": "Sirtakis Joghurt nach griechischer Art 1kg",
+    "Skyr": "Arla Skyr Natur 450g",
+    "Salz": "Bad Reichenhaller Marken-Jodsalz mit Fluorid 500g",
+    "Crème fraîche": "REWE Bio Naturland Crème fraîche 30% Fett 150g",
+    "Haferdrink": "REWE Bio pflanzlich Barista Hafer-Soja Drink 1l",
+    "Himbeeren": "REWE Beste Wahl Himbeeren 500g",
+    "Zwiebeln": "Zwiebeln 1,5kg",
+    "Kartoffeln": "Kartoffeln (loses Gemüse, regional)",
+    "Tomaten": "Tomaten (loose, regional/saisonal)",
+    "Gurke": "Gurke (regional/saisonal)",
+    "Äpfel": "Äpfel (regional/saisonal)",
+    "König Frischkäse": "König Frischkäse",
+    "Cheddar": "Cheddar (Bio wenn möglich)",
+    "Eier": "Eier (Bio/Freilandhaltung)",
+    "Butter": "Butter (Bio wenn möglich)",
+    "Kuhmilch": "Milch (Bio, lokal)",
+    "Nüsse": "Gemischte Nüsse / Studentenfutter",
+    "Reiswaffeln": "Reiswaffeln (Bio/glutenfrei)",
+    "Limette": "Limette (frisch)",
+    "Sardinen": "Delamaris Sardinen mit Zitrone 103g"
+  },
+  "preferences": {
+    "glutenfrei": true,
+    "bio_preferred": true,
+    "lokal_preferred": true,
+    "nachhaltig": true
+  },
+  "notes": "Tochter hat Zöliakie - immer glutenfreie Optionen. Bevorzuge REWE Bio Produkte und lokale/regionale Ware. Fleisch wird separat bei Lidl gekauft."
+}

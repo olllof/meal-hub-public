@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "centre-of-nowhere-main", "run", "dev"],
+      "port": 3000
+    }
+  ]
+}

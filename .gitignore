@@ -1,0 +1,13 @@
+node_modules/
+.env.local
+.env*.local
+*.crt
+*.key
+meal-hub-data.json
+.vscode/
+.idea/
+.DS_Store
+centre-of-nowhere-main/
+._*
+*.tif
+Images/
