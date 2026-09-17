@@ -126,6 +126,7 @@
  }
 
  .main-nav .tab-btn {
+ position: relative;
  color: #ffffff !important;
  letter-spacing: 0.02em;
  -webkit-font-smoothing: antialiased;
@@ -135,10 +136,19 @@
 
  .main-nav .tab-btn.active {
   color: #ffffff !important;
- text-decoration: underline !important;
- text-decoration-thickness: 2px;
- text-underline-offset: 4px;
+ text-decoration: none !important;
  border-bottom: none !important;
+ }
+
+ .main-nav .tab-btn.active::after {
+ content: '';
+ position: absolute;
+ left: 0;
+ right: 0;
+ bottom: -4px;
+ height: 3px;
+ background: #ffffff;
+ border-radius: 0 0 2px 2px;
  }
 
  .content {
@@ -203,6 +213,18 @@
 
  .main-nav .tab-btn:hover {
  color: #ffffff !important;
+ text-decoration: none !important;
+ }
+
+ .main-nav .tab-btn:hover::after {
+ content: '';
+ position: absolute;
+ left: 0;
+ right: 0;
+ bottom: -4px;
+ height: 3px;
+ background: #ffffff;
+ border-radius: 0 0 2px 2px;
  }
 
  .tab-btn.active {
@@ -225,9 +247,7 @@
 
  .main-nav .tab-btn.active:hover {
  color: #ffffff !important;
- text-decoration: underline !important;
- text-decoration-thickness: 2px;
- text-underline-offset: 4px;
+ text-decoration: none !important;
  border-bottom-color: #ffffff !important;
  }
 
