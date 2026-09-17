@@ -114,12 +114,16 @@
  z-index: 100 !important;
  background: #0C472A !important;
  margin-bottom: 0 !important;
+ margin-left: 0 !important;
+ margin-right: 0 !important;
  padding: 0 20px !important;
  display: flex !important;
  align-items: center !important;
  justify-content: center !important;
  height: 90px !important;
  gap: 30px !important;
+ width: 100% !important;
+ box-sizing: border-box !important;
  }
 
  .main-nav .tab-btn {
@@ -127,9 +131,6 @@
  letter-spacing: 0.02em;
  -webkit-font-smoothing: antialiased;
  line-height: 1;
- display: flex !important;
- align-items: center !important;
- vertical-align: middle !important;
  }
 
 
@@ -1316,7 +1317,7 @@
  <h1>À<span style="margin-left: 16px;">TAAAABLE!</span></h1>
  </header>
 
- <div class="tabs main-nav" style="display: flex; gap: 30px; margin-top: 0; padding-bottom: 0; background: none; justify-content: center; width: 100%; max-width: 900px;">
+ <div class="tabs main-nav">
  <button class="tab-btn active" onclick="switchTab('week')" style="color: white;">Menu <span class="tab-badge" id="week-badge">0</span></button>
  <button class="tab-btn" onclick="switchTab('meals')" style="color: white;">Meals <span class="tab-badge" id="meals-badge">0</span></button>
  <button class="tab-btn" onclick="switchTab('shopping')" style="color: white;">Shopping <span class="tab-badge" id="shopping-badge">0</span></button>
