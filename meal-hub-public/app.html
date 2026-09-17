@@ -274,7 +274,7 @@
  display: flex;
  align-items: center;
  padding: 14px 0;
- border-bottom: 1px dashed #1a1a1a !important;
+ border-bottom: 1px solid #1a1a1a !important;
  background-image: none !important;
  gap: 12px;
  }
@@ -387,12 +387,20 @@
  #weekMenu .meal-name {
  flex: none;
  text-align: center;
- border-bottom: 1px dashed #1a1a1a;
+ border-bottom: 1px solid #1a1a1a;
  padding-bottom: 4px;
  }
 
  #weekMenu .receipt-delete-btn {
  margin-right: 0;
+ }
+
+ #weekMenu .receipt-delete-btn:hover {
+ border-color: transparent;
+ background: transparent;
+ text-decoration: underline;
+ text-decoration-thickness: 2px;
+ text-underline-offset: 3px;
  }
 
  .meal-name {
