@@ -369,13 +369,8 @@
  display: flex;
  align-items: center;
  padding: 16px 0;
- border-bottom: 1px dashed #1a1a1a;
  gap: 12px;
  transition: all 0.2s;
- }
-
- .week-meal:last-child {
- border-bottom: none;
  }
 
  .week-meal.cooked .meal-name {
@@ -383,35 +378,21 @@
  color: #000000 !important;
  }
 
- .week-meal input[type="checkbox"] {
- appearance: none;
- -webkit-appearance: none;
- width: 20px;
- height: 20px;
- cursor: pointer;
- flex-shrink: 0;
- margin-left: auto;
+ #weekMenu .week-meal {
+ display: flex;
+ justify-content: center;
+ gap: 6px;
+ }
+
+ #weekMenu .meal-name {
+ flex: none;
+ text-align: center;
+ border-bottom: 1px dashed #1a1a1a;
+ padding-bottom: 4px;
+ }
+
+ #weekMenu .receipt-delete-btn {
  margin-right: 0;
- order: 2;
- border: none;
- background: transparent;
- font-family: 'Urban Grotesk', Arial, sans-serif;
- padding: 0;
- color: #000000 !important;
- font-size: 18px;
- font-weight: bold;
- }
-
- .week-meal input[type="checkbox"]::before {
- content: "✓";
- }
-
- .week-meal input[type="checkbox"]:checked {
- color: #000000 !important;
- }
-
- .week-meal .meal-name {
- order: 1;
  }
 
  .meal-name {
@@ -1489,7 +1470,7 @@
  <button class="close-popup" onclick="closeIngredientsPopup()">×</button>
  <h3 id="popupMealName"></h3>
  <ul id="ingredientsList"></ul>
- <button class="btn-primary" id="searchRecipeBtn" onclick="searchRecipe(document.getElementById('popupMealName').textContent)" style="margin-top: 20px;">Search Recipe</button>
+ <button class="btn-primary" id="searchRecipeBtn" onclick="searchRecipe(document.getElementById('popupMealName').textContent)" style="display: block; width: fit-content; margin: 20px auto 0;">Search Recipe</button>
  </div>
  </div>
 
@@ -3469,14 +3450,14 @@
  // Render this week's menu (meals used for current shopping order)
  const weekMenu = document.getElementById('weekMenu');
  if (orderMeals.length > 0) {
- weekMenu.innerHTML = orderMeals.map((meal) => {
+ weekMenu.innerHTML = [...orderMeals].sort((a, b) => a.length - b.length).map((meal) => {
  const isCooked = (data.cookedMeals || []).includes(meal);
  const isFavorite = (data.classics || []).includes(meal);
  return `
  <div class="week-meal ${isCooked ? 'cooked' : ''}">
- <input type="checkbox" ${isCooked ? 'checked' : ''} onchange="toggleMealCooked('${escapeHtml(meal)}', this.checked)">
- <span class="meal-name meal-clickable" style="cursor: pointer; flex: 1; order: 1;" data-meal="${escapeHtml(meal)}">${escapeHtml(meal)}</span>
- <button class="heart-btn" onclick="toggleMealClassic('${escapeHtml(meal)}', this)" style="background: none; border: none; cursor: pointer; padding: 4px 8px; color: #000000 !important; order: 2; flex-shrink: 0; display: flex; align-items: center; justify-content: center;">
+ <button class="receipt-delete-btn" onclick="toggleMealCooked('${escapeHtml(meal)}', ${!isCooked})" title="Mark as cooked">×</button>
+ <span class="meal-name meal-clickable" style="cursor: pointer;" data-meal="${escapeHtml(meal)}">${escapeHtml(meal)}</span>
+ <button class="heart-btn" onclick="toggleMealClassic('${escapeHtml(meal)}', this)" style="background: none; border: none; cursor: pointer; padding: 4px 8px; color: #000000 !important; flex-shrink: 0; display: flex; align-items: center; justify-content: center;">
  <svg width="20" height="20" viewBox="0 0 24 24" fill="${isFavorite ? '#0C472A' : 'none'}" stroke="#0C472A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
  </svg>
@@ -3810,7 +3791,7 @@
  <tr>
  <td>${escapeHtml(formatDateConsistent(cost.date))}</td>
  <td>${escapeHtml(cost.source)}</td>
- <td>€${cost.amount.toFixed(2)}${cost.type === 'receipt' ? ` <button class="receipt-delete-btn" onclick="deleteReceipt(${cost.index})">×</button>` : ''}</td>
+ <td>${cost.type === 'receipt' ? `<button class="receipt-delete-btn" onclick="deleteReceipt(${cost.index})">×</button> ` : ''}€${cost.amount.toFixed(2)}</td>
  </tr>
  `;
  });
