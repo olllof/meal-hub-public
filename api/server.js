@@ -1313,7 +1313,7 @@ async function fetchExternalSuggestions() {
 
   for (let i = 0; i < 7 && vegCount < vegetarianTarget; i++) {
     try {
-      const spoonResponse = await fetch(`https://api.spoonacular.com/recipes/complexSearch?diet=vegetarian&number=1&apiKey=${SPOONACULAR_KEY}&offset=${Math.floor(Math.random() * 50)}`);
+      const spoonResponse = await fetch(`https://api.spoonacular.com/recipes/complexSearch?diet=vegetarian&number=1&addRecipeInformation=true&apiKey=${SPOONACULAR_KEY}&offset=${Math.floor(Math.random() * 50)}`);
       const spoonData = await spoonResponse.json();
       if (spoonData.results && spoonData.results.length > 0) {
         const recipe = spoonData.results[0];
@@ -1357,7 +1357,7 @@ async function fetchExternalSuggestions() {
 
   for (let i = 0; i < 3 && meatCount < meatTarget; i++) {
     try {
-      const spoonResponse = await fetch(`https://api.spoonacular.com/recipes/complexSearch?type=main%20course&number=1&apiKey=${SPOONACULAR_KEY}&offset=${Math.floor(Math.random() * 50)}`);
+      const spoonResponse = await fetch(`https://api.spoonacular.com/recipes/complexSearch?type=main%20course&number=1&addRecipeInformation=true&apiKey=${SPOONACULAR_KEY}&offset=${Math.floor(Math.random() * 50)}`);
       const spoonData = await spoonResponse.json();
       if (spoonData.results && spoonData.results.length > 0) {
         const recipe = spoonData.results[0];
