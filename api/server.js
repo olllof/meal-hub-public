@@ -1278,7 +1278,7 @@ app.post("/api/scrape-recipe", async (req, res) => {
 // MEAL GENERATION (TheMealDB + Spoonacular)
 // ============================================================================
 
-const SPOONACULAR_KEY = "716534d4da684862b03707cb3e9e2d87";
+const SPOONACULAR_KEY = process.env.SPOONACULAR_API_KEY;
 
 async function fetchExternalSuggestions() {
   const data = await loadData();

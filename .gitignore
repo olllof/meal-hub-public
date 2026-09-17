@@ -11,3 +11,5 @@ centre-of-nowhere-main/
 ._*
 *.tif
 Images/
+.vercel
+.env*
