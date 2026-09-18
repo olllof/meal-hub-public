@@ -703,6 +703,44 @@ function translateIngredient(ingredient) {
   return result;
 }
 
+// MyMemory is a free, keyless translation API - no signup, no billing
+// account, generous rate limit for short phrases like grocery items.
+// Used only as a fallback when the curated INGREDIENT_TRANSLATIONS
+// dictionary has no entry, so common items stay fast/offline and only
+// unusual ones pay for a network round trip.
+async function translateToGermanFallback(text) {
+  try {
+    const response = await fetch(
+      `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|de`,
+      { signal: AbortSignal.timeout(4000) }
+    );
+    const result = await response.json();
+    const translated = result?.responseData?.translatedText;
+    const quality = result?.responseData?.match;
+    if (translated && quality >= 0.5) {
+      return translated.replace(/[.!?]+$/, "").trim();
+    }
+  } catch (err) {
+    console.log("MyMemory translation fallback failed:", err.message);
+  }
+  return null;
+}
+
+// Tries the curated dictionary first (instant, no network call); only
+// falls back to the translation API when nothing in the dictionary
+// matched at all, so it stays fast for the ~300 already-known items.
+async function translateIngredientWithFallback(ingredient) {
+  const cleaned = cleanIngredient(ingredient);
+  const dictResult = translateIngredient(ingredient);
+
+  if (dictResult.toLowerCase() !== cleaned.toLowerCase()) {
+    return dictResult; // Dictionary found (or partially substituted) something.
+  }
+
+  const apiResult = await translateToGermanFallback(cleaned);
+  return apiResult || dictResult;
+}
+
 function getMealIngredients(mealName, scrapedMeals = {}) {
   if (scrapedMeals[mealName]) return scrapedMeals[mealName];
   if (MEAL_INGREDIENTS[mealName]) return MEAL_INGREDIENTS[mealName];
@@ -983,7 +1021,7 @@ app.post("/api/shopping", async (req, res) => {
           item = translateIngredient(item);
         }
       } else if (action === "add") {
-        item = translateIngredient(item);
+        item = await translateIngredientWithFallback(item);
       }
 
       if (action === "add" && !data.shoppingList.includes(item) && !data.extraItems.includes(item)) {
