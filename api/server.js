@@ -1286,17 +1286,45 @@ app.post("/api/scrape-recipe", async (req, res) => {
 
 const SPOONACULAR_KEY = process.env.SPOONACULAR_API_KEY;
 
+// TheMealDB's search.php response already carries strIngredient1..20 /
+// strMeasure1..20 pairs - no need to scrape the source URL's HTML for
+// something the API handed us directly.
+function extractTheMealDbIngredients(mealDetail) {
+  const ingredients = [];
+  for (let i = 1; i <= 20; i++) {
+    const ingredient = (mealDetail[`strIngredient${i}`] || "").trim();
+    const measure = (mealDetail[`strMeasure${i}`] || "").trim();
+    if (ingredient) {
+      ingredients.push(measure ? `${measure} ${ingredient}` : ingredient);
+    }
+  }
+  return ingredients;
+}
+
 async function fetchExternalSuggestions() {
   const data = await loadData();
   if (!data.scrapedMealUrls) data.scrapedMealUrls = {};
+  if (!data.scrapedMeals) data.scrapedMeals = {};
 
   const otherSuggestions = [];
   const mealNames = new Set();
 
+  // Only counts toward its target, and only enters suggestions, once we've
+  // actually confirmed ingredient data exists for it - otherwise the user
+  // clicks a suggestion and finds an empty ingredients list.
+  function acceptMeal(mealName, sourceUrl, ingredients) {
+    if (mealNames.has(mealName) || !ingredients || ingredients.length === 0) return false;
+    mealNames.add(mealName);
+    otherSuggestions.push(mealName);
+    if (sourceUrl) data.scrapedMealUrls[mealName] = sourceUrl;
+    data.scrapedMeals[mealName] = ingredients;
+    return true;
+  }
+
   const vegetarianTarget = 14;
   let vegCount = 0;
 
-  for (let i = 0; i < 7 && vegCount < vegetarianTarget; i++) {
+  for (let i = 0; i < 12 && vegCount < vegetarianTarget; i++) {
     try {
       const vegResponse = await fetch('https://www.themealdb.com/api/json/v1/1/filter.php?c=Vegetarian');
       const vegData = await vegResponse.json();
@@ -1304,32 +1332,26 @@ async function fetchExternalSuggestions() {
         const randomMeal = vegData.meals[Math.floor(Math.random() * vegData.meals.length)];
         const mealName = randomMeal.strMeal;
         if (!mealNames.has(mealName)) {
-          otherSuggestions.push(mealName);
-          mealNames.add(mealName);
-          vegCount++;
           const detailResponse = await fetch(`https://www.themealdb.com/api/json/v1/1/search.php?s=${encodeURIComponent(mealName)}`);
           const detailData = await detailResponse.json();
-          if (detailData.meals && detailData.meals[0].strSource) {
-            data.scrapedMealUrls[mealName] = detailData.meals[0].strSource;
+          const detail = detailData.meals && detailData.meals[0];
+          if (detail && acceptMeal(mealName, detail.strSource, extractTheMealDbIngredients(detail))) {
+            vegCount++;
           }
         }
       }
     } catch (e) { console.log('Error fetching TheMealDB vegetarian:', e.message); }
   }
 
-  for (let i = 0; i < 7 && vegCount < vegetarianTarget; i++) {
+  for (let i = 0; i < 12 && vegCount < vegetarianTarget; i++) {
     try {
-      const spoonResponse = await fetch(`https://api.spoonacular.com/recipes/complexSearch?diet=vegetarian&number=1&addRecipeInformation=true&apiKey=${SPOONACULAR_KEY}&offset=${Math.floor(Math.random() * 50)}`);
+      const spoonResponse = await fetch(`https://api.spoonacular.com/recipes/complexSearch?diet=vegetarian&number=1&addRecipeInformation=true&fillIngredients=true&apiKey=${SPOONACULAR_KEY}&offset=${Math.floor(Math.random() * 50)}`);
       const spoonData = await spoonResponse.json();
       if (spoonData.results && spoonData.results.length > 0) {
         const recipe = spoonData.results[0];
-        const mealName = recipe.title;
-        const sourceUrl = recipe.sourceUrl;
-        if (!mealNames.has(mealName)) {
-          otherSuggestions.push(mealName);
-          mealNames.add(mealName);
+        const ingredients = (recipe.extendedIngredients || []).map((i) => i.original).filter(Boolean);
+        if (acceptMeal(recipe.title, recipe.sourceUrl, ingredients)) {
           vegCount++;
-          if (sourceUrl) data.scrapedMealUrls[mealName] = sourceUrl;
         }
       }
     } catch (e) { console.log('Error fetching Spoonacular vegetarian:', e.message); }
@@ -1339,7 +1361,7 @@ async function fetchExternalSuggestions() {
   let meatCount = 0;
   const meatCategories = ['Chicken', 'Beef', 'Seafood'];
 
-  for (let i = 0; i < 3 && meatCount < meatTarget; i++) {
+  for (let i = 0; i < 6 && meatCount < meatTarget; i++) {
     try {
       const meatCategory = meatCategories[i % meatCategories.length];
       const meatResponse = await fetch(`https://www.themealdb.com/api/json/v1/1/filter.php?c=${meatCategory}`);
@@ -1348,32 +1370,26 @@ async function fetchExternalSuggestions() {
         const randomMeal = meatData.meals[Math.floor(Math.random() * meatData.meals.length)];
         const mealName = randomMeal.strMeal;
         if (!mealNames.has(mealName)) {
-          otherSuggestions.push(mealName);
-          mealNames.add(mealName);
-          meatCount++;
           const detailResponse = await fetch(`https://www.themealdb.com/api/json/v1/1/search.php?s=${encodeURIComponent(mealName)}`);
           const detailData = await detailResponse.json();
-          if (detailData.meals && detailData.meals[0].strSource) {
-            data.scrapedMealUrls[mealName] = detailData.meals[0].strSource;
+          const detail = detailData.meals && detailData.meals[0];
+          if (detail && acceptMeal(mealName, detail.strSource, extractTheMealDbIngredients(detail))) {
+            meatCount++;
           }
         }
       }
     } catch (e) { console.log('Error fetching TheMealDB meat:', e.message); }
   }
 
-  for (let i = 0; i < 3 && meatCount < meatTarget; i++) {
+  for (let i = 0; i < 6 && meatCount < meatTarget; i++) {
     try {
-      const spoonResponse = await fetch(`https://api.spoonacular.com/recipes/complexSearch?type=main%20course&number=1&addRecipeInformation=true&apiKey=${SPOONACULAR_KEY}&offset=${Math.floor(Math.random() * 50)}`);
+      const spoonResponse = await fetch(`https://api.spoonacular.com/recipes/complexSearch?type=main%20course&number=1&addRecipeInformation=true&fillIngredients=true&apiKey=${SPOONACULAR_KEY}&offset=${Math.floor(Math.random() * 50)}`);
       const spoonData = await spoonResponse.json();
       if (spoonData.results && spoonData.results.length > 0) {
         const recipe = spoonData.results[0];
-        const mealName = recipe.title;
-        const sourceUrl = recipe.sourceUrl;
-        if (!mealNames.has(mealName)) {
-          otherSuggestions.push(mealName);
-          mealNames.add(mealName);
+        const ingredients = (recipe.extendedIngredients || []).map((i) => i.original).filter(Boolean);
+        if (acceptMeal(recipe.title, recipe.sourceUrl, ingredients)) {
           meatCount++;
-          if (sourceUrl) data.scrapedMealUrls[mealName] = sourceUrl;
         }
       }
     } catch (e) { console.log('Error fetching Spoonacular meat:', e.message); }
