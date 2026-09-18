@@ -295,8 +295,11 @@
  }
 
  .meal-remove:hover {
- border-color: #000000 !important;
- background: rgba(224, 57, 43, 0.1);
+ border-color: transparent;
+ background: transparent;
+ text-decoration: underline;
+ text-decoration-thickness: 2px;
+ text-underline-offset: 3px;
  }
 
  .shopping-list {
@@ -459,8 +462,11 @@
  }
 
  .shopping-remove:hover {
- border-color: #000000 !important;
- background: rgba(224, 57, 43, 0.1);
+ border-color: transparent;
+ background: transparent;
+ text-decoration: underline;
+ text-decoration-thickness: 2px;
+ text-underline-offset: 3px;
  }
 
  .item-qty-controls {
@@ -819,13 +825,20 @@
  letter-spacing: 0.5px;
  }
 
- .message {
+ .message:not(:empty) {
+ position: fixed;
+ top: 20px;
+ left: 50%;
+ transform: translateX(-50%);
+ z-index: 9999;
  padding: 15px;
  border-radius: 0;
- margin-bottom: 15px;
  text-align: center;
  font-size: 0.9rem;
  animation: slideIn 0.3s ease;
+ width: calc(100% - 40px);
+ max-width: 860px;
+ box-shadow: 0 4px 16px rgba(0,0,0,0.25);
  }
 
  .message.success {
@@ -841,8 +854,8 @@
  }
 
  @keyframes slideIn {
- from { transform: translateY(-20px); opacity: 0; }
- to { transform: translateY(0); opacity: 1; }
+ from { transform: translateX(-50%) translateY(-20px); opacity: 0; }
+ to { transform: translateX(-50%) translateY(0); opacity: 1; }
  }
 
  .connection-status {
@@ -1210,8 +1223,11 @@
  }
 
  .receipt-delete-btn:hover {
- border-color: #000000 !important;
- background: rgba(224, 57, 43, 0.1);
+ border-color: transparent;
+ background: transparent;
+ text-decoration: underline;
+ text-decoration-thickness: 2px;
+ text-underline-offset: 3px;
  }
 
  .receipt-grand-total {
@@ -2135,9 +2151,27 @@
  method: 'POST',
  headers: { 'Content-Type': 'application/json' },
  body: JSON.stringify({ action, item })
- }).then(() => {
+ }).then(r => r.json()).then(updatedData => {
+ data = updatedData;
  render();
  showMessage(isBaseline ? `${item} was removed from baseline items` : `${item} was added as a baseline item`, 'success');
+ });
+ }
+
+ // Used for the Purchase History heart button: add-only, never removes.
+ // Clicking an item already in the baseline is a no-op (stays there).
+ function addToBaselineOnly(item) {
+ if ((data.shoppingList || []).includes(item)) {
+ return;
+ }
+ fetch('/api/shopping', {
+ method: 'POST',
+ headers: { 'Content-Type': 'application/json' },
+ body: JSON.stringify({ action: 'promote-to-baseline', item })
+ }).then(r => r.json()).then(updatedData => {
+ data = updatedData;
+ render();
+ showMessage(`${item} was added as a baseline item`, 'success');
  });
  }
 
@@ -3325,7 +3359,7 @@
  <span class="item-label" style="cursor: pointer; display: block; font-weight: 500;" onclick="addItemByName('${escapeHtml(item.name)}')">${escapeHtml(item.name)}</span>
  ${item.brand ? `<span style="font-size: 0.95rem; color: #000000 !important; display: block; margin-top: 2px;">${escapeHtml(item.brand)}</span>` : ''}
  </div>
- <button class="heart-btn" onclick="toggleItemBaseline('${escapeHtml(item.name)}', this)" style="background: none; border: none; cursor: pointer; padding: 4px 8px; color: #000000 !important; display: flex; align-items: center; justify-content: center;">
+ <button class="heart-btn" onclick="addToBaselineOnly('${escapeHtml(item.name)}')" style="background: none; border: none; cursor: pointer; padding: 4px 8px; color: #000000 !important; display: flex; align-items: center; justify-content: center;">
  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0C472A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
  </svg>
@@ -3368,7 +3402,7 @@
  <span class="item-label" style="cursor: pointer; display: block; font-weight: 500;" onclick="addItemByName('${escapeHtml(item.name)}')">${escapeHtml(item.name)}</span>
  ${item.brand ? `<span style="font-size: 0.95rem; color: #000000 !important; display: block; margin-top: 2px;">${escapeHtml(item.brand)}</span>` : ''}
  </div>
- <button class="heart-btn" onclick="toggleItemBaseline('${escapeHtml(item.name)}', this)" style="background: none; border: none; cursor: pointer; padding: 4px 8px; color: #000000 !important; display: flex; align-items: center; justify-content: center;">
+ <button class="heart-btn" onclick="addToBaselineOnly('${escapeHtml(item.name)}')" style="background: none; border: none; cursor: pointer; padding: 4px 8px; color: #000000 !important; display: flex; align-items: center; justify-content: center;">
  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0C472A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
  </svg>
