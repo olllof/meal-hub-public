@@ -1795,7 +1795,7 @@
  try {
  // Show loading modal immediately
  const modal = document.getElementById('suggestionsModal');
- document.getElementById('suggestionsContent').innerHTML = '<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 40px; gap: 20px;"><div style="font-size: 2rem;"></div><h2 style="font-family: \'Century Expanded\', monospace; font-weight: 400; margin: 0; font-size: 1.8rem; color: #ffffff !important; text-transform: uppercase;">Fetching Recipes</h2><p style="color: #ffffff !important; margin: 0; font-size: 0.95rem;">Pulling fresh ideas from TheMealDB & Spoonacular...</p></div>';
+ document.getElementById('suggestionsContent').innerHTML = '<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 40px; gap: 20px;"><div style="font-size: 2rem;"></div><h2 style="font-family: \'Silent Citadel\', sans-serif; font-weight: bold; font-size: 0.9rem; color: #ffffff !important; margin: 0; width: 100%; display: flex; align-items: center; justify-content: center; gap: 12px; line-height: 1.2; text-transform: uppercase;"><span style="line-height: 1.2; display: inline-flex; align-items: center; transform: translateY(6px);">*</span>Fetching Recipes<span style="line-height: 1.2; display: inline-flex; align-items: center; transform: translateY(6px);">*</span></h2><p style="color: #ffffff !important; margin: 0; font-size: 0.95rem;">Pulling fresh ideas from TheMealDB & Spoonacular...</p></div>';
  modal.style.display = 'block';
 
  // Fetch recipes
@@ -1816,8 +1816,7 @@
  const classicsList = suggestionsContent?.querySelector('#classicsList');
  let html = '';
  result.classics.forEach(meal => {
- html += `<div style="padding: 12px 0; border-bottom: 1px solid;
- border-image: repeating-linear-gradient(90deg, rgba(255,255,255,0.3) 0, rgba(255,255,255,0.3) 6px, transparent 6px, transparent 7px) 1 0 0 0; display: flex; justify-content: space-between; align-items: center;">
+ html += `<div style="padding: 12px 0; border-bottom: 1px solid #ffffff; display: flex; justify-content: space-between; align-items: center;">
  <button onclick="addMealFromSuggestion('${escapeHtml(meal)}')" style="background: none; border: none; color: #ffffff !important; cursor: pointer; padding: 0; font-family: 'Urban Grotesk', Arial; font-size: 0.9rem; text-align: left; flex: 1;">${escapeHtml(meal)}</button>
  </div>`;
  });
@@ -1842,10 +1841,9 @@
  result.suggestions.forEach(suggestion => {
  const mealName = typeof suggestion === 'string' ? suggestion : suggestion.name;
  const mealUrl = typeof suggestion === 'string' ? null : suggestion.url;
- html += `<div style="padding: 12px 0; border-bottom: 1px solid;
- border-image: repeating-linear-gradient(90deg, rgba(255,255,255,0.3) 0, rgba(255,255,255,0.3) 6px, transparent 6px, transparent 7px) 1 0 0 0; display: flex; justify-content: space-between; align-items: center;">
+ html += `<div style="padding: 12px 0; border-bottom: 1px solid #ffffff; display: flex; justify-content: space-between; align-items: center;">
  <button onclick="addMealFromSuggestion('${escapeHtml(mealName)}')" style="background: none; border: none; color: #ffffff !important; cursor: pointer; padding: 0; font-family: 'Urban Grotesk', Arial; font-size: 0.9rem; text-align: left; flex: 1;">${escapeHtml(mealName)}</button>
- ${mealUrl ? `<a href="${escapeHtml(mealUrl)}" target="_blank" style="flex-shrink: 0; color: #ffffff !important; text-decoration: none; font-size: 0.9rem; opacity: 0.5; margin-left: 12px;" title="View Recipe">↗</a>` : ''}
+ ${mealUrl ? `<a href="${escapeHtml(mealUrl)}" target="_blank" style="flex-shrink: 0; color: #ffffff !important; text-decoration: none; font-size: 0.9rem; margin-left: 12px;" title="View Recipe">↗</a>` : ''}
  </div>`;
  });
  if (suggestionsList) {
@@ -1861,27 +1859,25 @@
 
  function showSuggestionsModal(classics, suggestions) {
  const modal = document.getElementById('suggestionsModal');
- let html = '<h2 style="font-family: \'Century Expanded\', monospace; margin: 0 0 32px 0; font-size: 1.8rem; font-weight: 400; color: #ffffff !important; text-align: center; text-transform: uppercase;">Choose Meals</h2>';
+ let html = '<h2 style="font-family: \'Silent Citadel\', sans-serif; font-weight: bold; font-size: 0.9rem; color: #ffffff !important; margin: 0 0 35px 0; text-align: center; width: 100%; display: flex; align-items: center; justify-content: center; gap: 12px; line-height: 1.2; text-transform: uppercase;"><span style="line-height: 1.2; display: inline-flex; align-items: center; transform: translateY(6px);">*</span>Choose Meals<span style="line-height: 1.2; display: inline-flex; align-items: center; transform: translateY(6px);">*</span></h2>';
 
- html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;"><h3 style="font-family: \'Urban Grotesk\', Arial; font-size: 0.9rem; font-weight: 500; color: #ffffff !important; margin: 0; text-transform: uppercase; letter-spacing: 0.5px;">Suggested Classics</h3><button onclick="refreshClassics()" style="background: none; border: none; color: #ffffff !important; cursor: pointer; font-size: 0.9rem; padding: 0; opacity: 0.5; transition: opacity 0.2s;">↻</button></div>';
+ html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;"><h3 style="font-family: \'Urban Grotesk\', Arial; font-size: 0.9rem; font-weight: 500; color: #ffffff !important; margin: 0; text-transform: uppercase; letter-spacing: 0.5px;">Suggested Classics</h3><button onclick="refreshClassics()" style="background: none; border: none; color: #ffffff !important; cursor: pointer; font-size: 0.9rem; padding: 0;">↻</button></div>';
  html += '<div id="classicsList">';
  classics.forEach((meal, idx) => {
- html += `<div style="padding: 12px 0; border-bottom: 1px solid;
- border-image: repeating-linear-gradient(90deg, rgba(255,255,255,0.3) 0, rgba(255,255,255,0.3) 6px, transparent 6px, transparent 7px) 1 0 0 0; display: flex; justify-content: space-between; align-items: center;">
+ html += `<div style="padding: 12px 0; border-bottom: 1px solid #ffffff; display: flex; justify-content: space-between; align-items: center;">
  <button onclick="addMealFromSuggestion('${escapeHtml(meal)}')" style="background: none; border: none; color: #ffffff !important; cursor: pointer; padding: 0; font-family: 'Urban Grotesk', Arial; font-size: 0.9rem; text-align: left; flex: 1;">${escapeHtml(meal)}</button>
  </div>`;
  });
  html += '</div>';
 
- html += '<div style="display: flex; justify-content: space-between; align-items: center; margin: 32px 0 24px 0;"><h3 style="font-family: \'Urban Grotesk\', Arial; font-size: 0.9rem; font-weight: 500; color: #ffffff !important; margin: 0; text-transform: uppercase; letter-spacing: 0.5px;">This Weeks Suggestions</h3><button onclick="refreshSuggestions()" style="background: none; border: none; color: #ffffff !important; cursor: pointer; font-size: 0.9rem; padding: 0; opacity: 0.5; transition: opacity 0.2s;">↻</button></div>';
+ html += '<div style="display: flex; justify-content: space-between; align-items: center; margin: 32px 0 24px 0;"><h3 style="font-family: \'Urban Grotesk\', Arial; font-size: 0.9rem; font-weight: 500; color: #ffffff !important; margin: 0; text-transform: uppercase; letter-spacing: 0.5px;">This Weeks Suggestions</h3><button onclick="refreshSuggestions()" style="background: none; border: none; color: #ffffff !important; cursor: pointer; font-size: 0.9rem; padding: 0;">↻</button></div>';
  html += '<div id="suggestionsList">';
  suggestions.forEach(suggestion => {
  const mealName = typeof suggestion === 'string' ? suggestion : suggestion.name;
  const mealUrl = typeof suggestion === 'string' ? null : suggestion.url;
- html += `<div style="padding: 12px 0; border-bottom: 1px solid;
- border-image: repeating-linear-gradient(90deg, rgba(255,255,255,0.3) 0, rgba(255,255,255,0.3) 6px, transparent 6px, transparent 7px) 1 0 0 0; display: flex; justify-content: space-between; align-items: center;">
+ html += `<div style="padding: 12px 0; border-bottom: 1px solid #ffffff; display: flex; justify-content: space-between; align-items: center;">
  <button onclick="addMealFromSuggestion('${escapeHtml(mealName)}')" style="background: none; border: none; color: #ffffff !important; cursor: pointer; padding: 0; font-family: 'Urban Grotesk', Arial; font-size: 0.9rem; text-align: left; flex: 1;">${escapeHtml(mealName)}</button>
- ${mealUrl ? `<a href="${escapeHtml(mealUrl)}" target="_blank" style="flex-shrink: 0; color: #ffffff !important; text-decoration: none; font-size: 0.9rem; opacity: 0.5; margin-left: 12px;" title="View Recipe">↗</a>` : ''}
+ ${mealUrl ? `<a href="${escapeHtml(mealUrl)}" target="_blank" style="flex-shrink: 0; color: #ffffff !important; text-decoration: none; font-size: 0.9rem; margin-left: 12px;" title="View Recipe">↗</a>` : ''}
  </div>`;
  });
  html += '</div>';
@@ -2344,7 +2340,7 @@
  // Update button based on recipe URL
  const btn = document.getElementById('searchRecipeBtn');
  if (recipeUrl && recipeUrl.trim() !== '') {
- btn.innerHTML = '🔗 RECIPE';
+ btn.innerHTML = 'View Recipe';
  btn.onclick = () => window.open(recipeUrl, '_blank');
  btn.style.opacity = '1';
  btn.style.cursor = 'pointer';
