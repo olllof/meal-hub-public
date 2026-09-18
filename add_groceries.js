@@ -15,7 +15,7 @@ class PicnicAutomation {
   constructor(username, password) {
     this.username = username;
     this.password = password;
-    this.client = new PicnicClient({ countryCode: "NL" });
+    this.client = new PicnicClient({ countryCode: "DE" });
     this.addedItems = [];
     this.failedItems = [];
     this.purchaseHistory = new Map(); // productName -> product object
