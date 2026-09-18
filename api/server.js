@@ -1536,7 +1536,10 @@ async function processPicnicChunk(client, session) {
 app.post("/api/picnic-start-sync", async (req, res) => {
   try {
     const data = await loadData();
-    let { username, password } = req.body || {};
+    let { username, password, mode } = req.body || {};
+    // Costs and purchase history always refresh together; only the
+    // "Auto-Add to Picnic" button should actually touch the cart.
+    const shouldSyncCart = mode === "picnic";
 
     if (!username || !password) {
       if (data.picnicCredentials?.username && data.picnicCredentials?.password) {
@@ -1548,7 +1551,7 @@ app.post("/api/picnic-start-sync", async (req, res) => {
     }
 
     const groceryList = [...(data.shoppingList || []), ...(data.extraItems || [])];
-    if (groceryList.length === 0) {
+    if (shouldSyncCart && groceryList.length === 0) {
       return res.json({ success: false, error: "Shopping list is empty" });
     }
 
@@ -1560,6 +1563,7 @@ app.post("/api/picnic-start-sync", async (req, res) => {
       data.picnicSyncSession = {
         status: "pending_2fa",
         pendingAuthKey: client.authKey,
+        shouldSyncCart,
         remaining: groceryList,
         addedItems: [],
         failedItems: [],
@@ -1579,8 +1583,22 @@ app.post("/api/picnic-start-sync", async (req, res) => {
       brand: a.brand,
       price: a.price,
     }));
-    await client.cart.clearCart();
 
+    if (!shouldSyncCart) {
+      data.picnicSyncSession = null;
+      await saveData(data);
+      return res.json({
+        success: true,
+        requires2FA: false,
+        cartSyncSkipped: true,
+        done: true,
+        addedItems: [],
+        failedItems: [],
+        remainingCount: 0,
+      });
+    }
+
+    await client.cart.clearCart();
     const session = {
       remaining: groceryList,
       addedItems: [],
@@ -1594,6 +1612,7 @@ app.post("/api/picnic-start-sync", async (req, res) => {
     res.json({
       success: true,
       requires2FA: false,
+      cartSyncSkipped: false,
       done,
       addedItems: session.addedItems,
       failedItems: session.failedItems,
@@ -1626,8 +1645,22 @@ app.post("/api/picnic-verify-2fa", async (req, res) => {
       brand: a.brand,
       price: a.price,
     }));
-    await client.cart.clearCart();
 
+    if (!pending.shouldSyncCart) {
+      data.picnicSyncSession = null;
+      await saveData(data);
+      return res.json({
+        success: true,
+        requires2FA: false,
+        cartSyncSkipped: true,
+        done: true,
+        addedItems: [],
+        failedItems: [],
+        remainingCount: 0,
+      });
+    }
+
+    await client.cart.clearCart();
     const session = {
       remaining: pending.remaining,
       addedItems: [],
@@ -1641,6 +1674,7 @@ app.post("/api/picnic-verify-2fa", async (req, res) => {
     res.json({
       success: true,
       requires2FA: false,
+      cartSyncSkipped: false,
       done,
       addedItems: session.addedItems,
       failedItems: session.failedItems,

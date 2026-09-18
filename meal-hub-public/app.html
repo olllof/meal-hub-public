@@ -1600,12 +1600,12 @@
 
  <!-- Progress Display -->
  <div id="unifiedProgressDisplay" style="display: none; flex-direction: column; gap: 10px; margin-top: 20px;">
- <div style="font-size: 0.9rem; color: #ffffff !important; padding: 10px; background: rgba(255,255,255,0.08); border-radius: 4px;">
+ <div style="font-size: 0.9rem; color: #ffffff !important;">
  <div id="progressText" style="margin-bottom: 10px;"></div>
  <div style="display: flex; flex-direction: column; gap: 5px;">
- <div id="costProgress" style="font-size: 0.85rem; color: #ffffff;">⏳ Refreshing costs...</div>
- <div id="picnicProgress" style="font-size: 0.85rem; color: #ffffff;">⏳ Adding to Picnic...</div>
- <div id="historyProgress" style="font-size: 0.85rem; color: #ffffff;">⏳ Loading purchase history...</div>
+ <div id="costProgress" style="font-size: 0.85rem; color: #ffffff;">Refreshing costs...</div>
+ <div id="picnicProgress" style="font-size: 0.85rem; color: #ffffff;">Adding to Picnic...</div>
+ <div id="historyProgress" style="font-size: 0.85rem; color: #ffffff;">Loading purchase history...</div>
  </div>
  </div>
  </div>
@@ -2633,7 +2633,7 @@
  const response = await fetch('/api/picnic-start-sync', {
  method: 'POST',
  headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({ username: email, password })
+ body: JSON.stringify({ username: email, password, mode: unifiedAuthContext.triggerButton })
  });
 
  const result = await response.json();
@@ -2644,7 +2644,7 @@
  document.getElementById('unifiedLoginForm').style.display = 'none';
  document.getElementById('unified2FAForm').style.display = 'flex';
  document.getElementById('unified2FACode').focus();
- showMessage('📱 SMS code sent to your phone', 'info');
+ showMessage('SMS code sent to your phone', 'info');
  } else {
  // No 2FA required - login already ran costs/history/first cart chunk.
  document.getElementById('unifiedLoginForm').style.display = 'none';
@@ -2713,13 +2713,23 @@
  const picnicProgress = document.getElementById('picnicProgress');
  const historyProgress = document.getElementById('historyProgress');
 
- costProgress.innerHTML = '✅ Costs refreshed';
- historyProgress.innerHTML = '✅ Purchase history loaded';
+ costProgress.innerHTML = 'Costs refreshed';
+ historyProgress.innerHTML = 'Purchase history loaded';
  await loadCombinedCosts();
+
+ // Refresh Costs / Refresh Purchase History never touch the cart - only
+ // Auto-Add to Picnic does. The backend tells us which happened.
+ if (result.cartSyncSkipped) {
+ picnicProgress.style.display = 'none';
+ showMessage('Refreshed!', 'success');
+ setTimeout(() => closeUnifiedPicnicAuth(), 2000);
+ return;
+ }
+ picnicProgress.style.display = 'block';
 
  let addedCount = result.addedItems.length;
  let failedCount = result.failedItems.length;
- picnicProgress.innerHTML = `⏳ Adding to Picnic... ${addedCount + failedCount} done`;
+ picnicProgress.innerHTML = `Adding to Picnic... ${addedCount + failedCount} done`;
 
  let done = result.done;
  while (!done) {
@@ -2727,26 +2737,26 @@
  const response = await fetch('/api/picnic-sync-continue', { method: 'POST' });
  const chunk = await response.json();
  if (!chunk.success) {
- picnicProgress.innerHTML = '❌ Picnic failed: ' + (chunk.error || 'Unknown error');
+ picnicProgress.innerHTML = 'Picnic failed: ' + (chunk.error || 'Unknown error');
  break;
  }
  addedCount = chunk.addedItems.length;
  failedCount = chunk.failedItems.length;
- picnicProgress.innerHTML = `⏳ Adding to Picnic... ${addedCount + failedCount} done`;
+ picnicProgress.innerHTML = `Adding to Picnic... ${addedCount + failedCount} done`;
  done = chunk.done;
  } catch (error) {
- picnicProgress.innerHTML = '❌ Picnic failed: ' + error.message;
+ picnicProgress.innerHTML = 'Picnic failed: ' + error.message;
  break;
  }
  }
 
  if (done) {
  picnicProgress.innerHTML = failedCount > 0
- ? `✅ Added ${addedCount} items (${failedCount} not found)`
- : `✅ Added all ${addedCount} items to Picnic`;
+ ? `Added ${addedCount} items (${failedCount} not found)`
+ : `Added all ${addedCount} items to Picnic`;
  }
 
- showMessage('✅ Picnic sync complete!', 'success');
+ showMessage('Picnic sync complete!', 'success');
  setTimeout(() => closeUnifiedPicnicAuth(), 2500);
  }
 
