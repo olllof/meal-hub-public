@@ -2145,7 +2145,8 @@
  }
 
  function toggleItemBaseline(item, btn) {
- const isBaseline = (data.shoppingList || []).includes(item);
+ const itemLower = item.toLowerCase();
+ const isBaseline = (data.shoppingList || []).some(i => i.toLowerCase() === itemLower);
  const action = isBaseline ? 'remove-from-baseline' : 'promote-to-baseline';
  fetch('/api/shopping', {
  method: 'POST',
@@ -2161,7 +2162,8 @@
  // Used for the Purchase History heart button: add-only, never removes.
  // Clicking an item already in the baseline is a no-op (stays there).
  function addToBaselineOnly(item) {
- if ((data.shoppingList || []).includes(item)) {
+ const itemLower = item.toLowerCase();
+ if ((data.shoppingList || []).some(i => i.toLowerCase() === itemLower)) {
  return;
  }
  fetch('/api/shopping', {
@@ -3573,7 +3575,7 @@
  html += '<div><h3 style="font-family: \'Urban Grotesk\', Arial; font-size: 0.95rem; color: #000000 !important; margin: 0 0 15px 0; text-transform: none; letter-spacing: 0px; font-weight: 400;">New Items</h3><ul style="list-style: none; padding: 0; margin: 0;">';
  html += extraItems.map(item => {
  const mealsNeedingThis = ingredientToMeals[item.toLowerCase()] || [];
- const isBaseline = (data.shoppingList || []).includes(item);
+ const isBaseline = (data.shoppingList || []).some(i => i.toLowerCase() === item.toLowerCase());
  return `
  <li class="shopping-item" id="item-${escapeHtml(item)}" style="position: relative;">
  <div class="item-qty-controls">

@@ -1024,7 +1024,10 @@ app.post("/api/shopping", async (req, res) => {
         item = await translateIngredientWithFallback(item);
       }
 
-      if (action === "add" && !data.shoppingList.includes(item) && !data.extraItems.includes(item)) {
+      const itemLower = (item || "").toLowerCase();
+      const existsCaseInsensitive = (list) => list.some((i) => i.toLowerCase() === itemLower);
+
+      if (action === "add" && !existsCaseInsensitive(data.shoppingList) && !existsCaseInsensitive(data.extraItems)) {
         data.extraItems.unshift(item);
       } else if (action === "remove") {
         data.shoppingList = data.shoppingList.filter((i) => i !== item);
@@ -1033,11 +1036,11 @@ app.post("/api/shopping", async (req, res) => {
         data.shoppingList = data.shoppingList.filter((i) => i !== item);
         data.extraItems = data.extraItems.filter((i) => i !== item);
       } else if (action === "promote-to-baseline") {
-        data.extraItems = data.extraItems.filter((i) => i !== item);
-        if (!data.shoppingList.includes(item)) data.shoppingList.push(item);
+        data.extraItems = data.extraItems.filter((i) => i.toLowerCase() !== itemLower);
+        if (!existsCaseInsensitive(data.shoppingList)) data.shoppingList.push(item);
       } else if (action === "remove-from-baseline") {
-        data.shoppingList = data.shoppingList.filter((i) => i !== item);
-        if (!data.extraItems.includes(item)) data.extraItems.unshift(item);
+        data.shoppingList = data.shoppingList.filter((i) => i.toLowerCase() !== itemLower);
+        if (!existsCaseInsensitive(data.extraItems)) data.extraItems.unshift(item);
       }
     }
 
