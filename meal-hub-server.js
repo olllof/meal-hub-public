@@ -14,6 +14,7 @@ const path = require("path");
 const os = require("os");
 const cron = require("node-cron");
 const session = require("express-session");
+const { smartProductSearch } = require("./picnic-search.js");
 
 const app = express();
 
@@ -2678,23 +2679,16 @@ app.post("/api/picnic-start-sync", async (req, res) => {
         searchAndAddItem: async function(itemName) {
           try {
             process.stdout.write(`  Searching for: ${itemName}... `);
-            const results = await this.client.catalog.search(itemName);
+            const match = await smartProductSearch(this.client, itemName, purchaseHistory, selectBestProduct);
 
-            if (!results || results.length === 0) {
-              console.log("❌ Not found");
+            if (!match) {
+              console.log("❌ Not found (tried exact, history match, and fallback queries)");
               this.failedItems.push(itemName);
               return false;
             }
 
-            const product = selectBestProduct(results, purchaseHistory);
-            if (!product) {
-              console.log("❌ No suitable product found");
-              this.failedItems.push(itemName);
-              return false;
-            }
-
-            await this.client.cart.addProductToCart(product.id, 1);
-            console.log("✅ Added");
+            await this.client.cart.addProductToCart(match.product.id, 1);
+            console.log(`✅ Added (${match.matchedVia})`);
             this.addedItems.push(itemName);
             return true;
           } catch (error) {
@@ -2777,26 +2771,20 @@ app.post("/api/picnic-start-sync", async (req, res) => {
       await automation.clearCart();
 
       for (const item of groceryList) {
-        // Use improved searchAndAddItem with scoring
+        // Use smart multi-strategy search (exact -> history fuzzy match -> fallback queries)
         try {
           process.stdout.write(`  Searching for: ${item}... `);
-          const results = await automation.client.catalog.search(item);
+          const match = await smartProductSearch(automation.client, item, purchaseHistory, selectBestProduct);
 
-          if (!results || results.length === 0) {
-            console.log("❌ Not found");
+          if (!match) {
+            console.log("❌ Not found (tried exact, history match, and fallback queries)");
             automation.failedItems.push(item);
+            await new Promise((resolve) => setTimeout(resolve, 500));
             continue;
           }
 
-          const product = selectBestProduct(results, purchaseHistory);
-          if (!product) {
-            console.log("❌ No suitable product found");
-            automation.failedItems.push(item);
-            continue;
-          }
-
-          await automation.client.cart.addProductToCart(product.id, 1);
-          console.log("✅ Added");
+          await automation.client.cart.addProductToCart(match.product.id, 1);
+          console.log(`✅ Added (${match.matchedVia})`);
           automation.addedItems.push(item);
         } catch (error) {
           console.log(`❌ Error: ${error.message}`);
@@ -2929,26 +2917,20 @@ app.post("/api/picnic-verify-2fa", async (req, res) => {
       await automation.clearCart();
 
       for (const item of groceryList) {
-        // Use improved searchAndAddItem with scoring
+        // Use smart multi-strategy search (exact -> history fuzzy match -> fallback queries)
         try {
           process.stdout.write(`  Searching for: ${item}... `);
-          const results = await automation.client.catalog.search(item);
+          const match = await smartProductSearch(automation.client, item, purchaseHistory, selectBestProduct);
 
-          if (!results || results.length === 0) {
-            console.log("❌ Not found");
+          if (!match) {
+            console.log("❌ Not found (tried exact, history match, and fallback queries)");
             automation.failedItems.push(item);
+            await new Promise((resolve) => setTimeout(resolve, 500));
             continue;
           }
 
-          const product = selectBestProduct(results, purchaseHistory);
-          if (!product) {
-            console.log("❌ No suitable product found");
-            automation.failedItems.push(item);
-            continue;
-          }
-
-          await automation.client.cart.addProductToCart(product.id, 1);
-          console.log("✅ Added");
+          await automation.client.cart.addProductToCart(match.product.id, 1);
+          console.log(`✅ Added (${match.matchedVia})`);
           automation.addedItems.push(item);
         } catch (error) {
           console.log(`❌ Error: ${error.message}`);

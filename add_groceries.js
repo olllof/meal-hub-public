@@ -7,6 +7,7 @@
 
 const PicnicClient = require("picnic-api");
 const readline = require("readline");
+const { smartProductSearch } = require("./picnic-search.js");
 
 // Grocery list - will be fetched from server if available
 let GROCERY_LIST = [];
@@ -141,28 +142,23 @@ class PicnicAutomation {
     try {
       process.stdout.write(`  Searching for: ${itemName}... `);
 
-      // Search for product
-      const results = await this.client.catalog.search(itemName);
+      // Try exact search, then a purchase-history fuzzy match, then
+      // progressively simplified/normalized fallback queries.
+      const match = await smartProductSearch(
+        this.client,
+        itemName,
+        this.purchaseHistory,
+        (results) => this.selectBestProduct(results, itemName)
+      );
 
-      if (!results || results.length === 0) {
-        console.log("❌ Not found");
+      if (!match) {
+        console.log("❌ Not found (tried exact, history match, and fallback queries)");
         this.failedItems.push(itemName);
         return false;
       }
 
-      // Select best product based on criteria (Bio, local, etc.)
-      const product = this.selectBestProduct(results, itemName);
-      if (!product) {
-        console.log("❌ No suitable product found");
-        this.failedItems.push(itemName);
-        return false;
-      }
-
-      const productId = product.id;
-
-      // Add to cart
-      await this.client.cart.addProductToCart(productId, 1);
-      console.log("✅ Added");
+      await this.client.cart.addProductToCart(match.product.id, 1);
+      console.log(`✅ Added (${match.matchedVia})`);
       this.addedItems.push(itemName);
       return true;
     } catch (error) {
