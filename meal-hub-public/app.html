@@ -1658,16 +1658,13 @@
  }
  };
 
- // Auto-load cached costs on page init
+ // Costs are loaded once via the /api/data init fallback below, which
+ // runs regardless of whether the WebSocket connects (it doesn't, on
+ // serverless hosts - see the comment there). This used to also be
+ // triggered from ws.onopen, which raced with that fallback and could
+ // double-fire /api/combined-costs on hosts where the WebSocket briefly
+ // connects before failing.
  let costsAutoLoaded = false;
- ws.onopen = () => {
- updateStatus(true);
- // Load cached costs automatically on first connection
- if (!costsAutoLoaded) {
- costsAutoLoaded = true;
- setTimeout(() => loadCombinedCosts(), 500);
- }
- };
 
  // Voice Recognition Setup
  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1757,7 +1754,7 @@
  renderReceipts();
  }
 
- async function loadCombinedCosts() {
+ async function loadCombinedCosts(isRetry = false) {
  try {
  const response = await fetch('/api/combined-costs');
  const result = await response.json();
@@ -1765,12 +1762,20 @@
  if (result.success) {
  window.combinedCostsData = result;
  renderReceipts();
+ } else if (!isRetry) {
+ setTimeout(() => loadCombinedCosts(true), 1000);
  } else {
  showMessage('Unable to load cost data', 'error');
  }
  } catch (error) {
  console.error('Error loading combined costs:', error);
+ // Serverless cold starts can make the first request after a page
+ // load fail transiently - retry once before surfacing an error.
+ if (!isRetry) {
+ setTimeout(() => loadCombinedCosts(true), 1000);
+ } else {
  showMessage('Error loading costs', 'error');
+ }
  }
  }
 
