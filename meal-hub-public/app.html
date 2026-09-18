@@ -412,16 +412,18 @@
  }
 
  #weekMenu .week-meal {
- display: flex;
- justify-content: center;
- gap: 6px;
+ display: grid;
+ grid-template-columns: auto 1fr auto;
+ align-items: center;
+ border-bottom: 1px solid #1a1a1a;
+ }
+
+ #weekMenu .week-meal:last-child {
+ border-bottom: none;
  }
 
  #weekMenu .meal-name {
- flex: none;
  text-align: center;
- border-bottom: 1px solid #1a1a1a;
- padding-bottom: 1px;
  }
 
  #weekMenu .receipt-delete-btn {
