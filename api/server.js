@@ -2,6 +2,8 @@ const express = require("express");
 const crypto = require("crypto");
 const path = require("path");
 const { createClient } = require("@supabase/supabase-js");
+const PicnicClient = require("picnic-api");
+const { smartProductSearch, selectBestProduct } = require("../picnic-search.js");
 
 const app = express();
 
@@ -569,6 +571,10 @@ function getDefaultData() {
     cookedMeals: [],
     receipts: [],
     picnicCosts: [],
+    picnicCredentials: null,
+    picnicAuthKey: null,
+    picnicSyncSession: null,
+    picnicPurchaseHistoryProducts: [],
     scrapedMeals: {},
     scrapedMealUrls: {},
     costCache: { totals: null, stores: null, lastUpdated: null },
@@ -1417,31 +1423,293 @@ app.post("/api/generate-suggestions", async (req, res) => {
 });
 
 // ============================================================================
-// PICNIC (disabled during migration)
+// PICNIC
+//
+// Serverless functions have no shared memory between invocations and a hard
+// execution time limit, which is why this can't just be a straight port of
+// the always-on local server's version (which keeps the authenticated
+// client and any in-progress sync in a plain in-memory variable, and runs
+// the whole cart-add loop in one long request). Instead:
+//   - The Picnic auth key (a plain string picnic-api hands back after login
+//     / after 2FA) is persisted in Supabase and used to reconstruct a fresh
+//     PicnicClient on every request - no server process needs to stay up.
+//   - The cart-sync loop is processed in small chunks. Each request handles
+//     PICNIC_SYNC_CHUNK_SIZE items and returns; the frontend calls
+//     /api/picnic-sync-continue in a loop until done, so no single request
+//     risks the platform's execution time limit.
 // ============================================================================
 
-app.post("/api/picnic-start-sync", (req, res) => {
-  res.json({ success: false, error: "Picnic sync temporarily disabled during migration" });
+const PICNIC_SYNC_CHUNK_SIZE = 6;
+
+function makePicnicClient(authKey) {
+  return new PicnicClient({ countryCode: "DE", authKey: authKey || undefined });
+}
+
+function serializePurchaseHistory(map) {
+  return Array.from(map.entries()).map(([key, article]) => ({ key, article }));
+}
+
+function deserializePurchaseHistory(arr) {
+  const map = new Map();
+  (arr || []).forEach(({ key, article }) => map.set(key, article));
+  return map;
+}
+
+async function loadPicnicPurchaseHistory(client) {
+  const purchaseHistory = new Map();
+  try {
+    const deliveries = await client.delivery.getDeliveries();
+    if (deliveries && deliveries.length > 0) {
+      for (const delivery of deliveries.slice(0, 5)) {
+        try {
+          const detail = await client.delivery.getDelivery(delivery.delivery_id);
+          if (detail && detail.orders) {
+            for (const order of detail.orders) {
+              if (order.items) {
+                for (const orderLine of order.items) {
+                  if (orderLine.items && Array.isArray(orderLine.items)) {
+                    for (const article of orderLine.items) {
+                      const key = (article.name || "").toLowerCase();
+                      if (key) purchaseHistory.set(key, article);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (err) {
+          // Skip this delivery's detail, keep whatever else we've collected.
+        }
+      }
+    }
+  } catch (err) {
+    // No history available - smart search still works via search fallbacks.
+  }
+  return purchaseHistory;
+}
+
+// Fetch delivery costs and save them in the same {date, amount} shape
+// /api/combined-costs already knows how to aggregate.
+async function savePicnicDeliveryCosts(client, data) {
+  try {
+    const deliveries = await client.delivery.getDeliveries();
+    if (deliveries && deliveries.length > 0) {
+      data.picnicCosts = deliveries.map((d) => ({
+        date: new Date(d.delivery_time?.start || d.delivery_date).toISOString(),
+        amount:
+          d.orders && d.orders[0]?.total_price
+            ? parseFloat((d.orders[0].total_price / 100).toFixed(2))
+            : d.amount
+            ? parseFloat(d.amount)
+            : 0,
+      }));
+    }
+  } catch (err) {
+    // Leave existing picnicCosts untouched if this fails.
+  }
+}
+
+// Processes up to PICNIC_SYNC_CHUNK_SIZE items from session.remaining,
+// mutating session in place. Returns true once nothing is left.
+async function processPicnicChunk(client, session) {
+  const items = session.remaining.splice(0, PICNIC_SYNC_CHUNK_SIZE);
+  const purchaseHistory = deserializePurchaseHistory(session.purchaseHistory);
+
+  for (const item of items) {
+    try {
+      const match = await smartProductSearch(client, item, purchaseHistory, selectBestProduct);
+      if (!match) {
+        session.failedItems.push(item);
+      } else {
+        await client.cart.addProductToCart(match.product.id, 1);
+        session.addedItems.push(item);
+      }
+    } catch (err) {
+      session.failedItems.push(item);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  return session.remaining.length === 0;
+}
+
+app.post("/api/picnic-start-sync", async (req, res) => {
+  try {
+    const data = await loadData();
+    let { username, password } = req.body || {};
+
+    if (!username || !password) {
+      if (data.picnicCredentials?.username && data.picnicCredentials?.password) {
+        username = data.picnicCredentials.username;
+        password = data.picnicCredentials.password;
+      } else {
+        return res.json({ success: false, error: "No credentials provided or saved" });
+      }
+    }
+
+    const groceryList = [...(data.shoppingList || []), ...(data.extraItems || [])];
+    if (groceryList.length === 0) {
+      return res.json({ success: false, error: "Shopping list is empty" });
+    }
+
+    const client = makePicnicClient();
+    const loginResponse = await client.auth.login(username, password);
+
+    if (loginResponse.second_factor_authentication_required) {
+      await client.auth.generate2FACode("SMS");
+      data.picnicSyncSession = {
+        status: "pending_2fa",
+        pendingAuthKey: client.authKey,
+        remaining: groceryList,
+        addedItems: [],
+        failedItems: [],
+        purchaseHistory: [],
+        createdAt: new Date().toISOString(),
+      };
+      await saveData(data);
+      return res.json({ success: true, requires2FA: true, sessionId: "picnic" });
+    }
+
+    // No 2FA required (rare) - log in and process the first chunk right away.
+    data.picnicAuthKey = client.authKey;
+    await savePicnicDeliveryCosts(client, data);
+    const purchaseHistory = await loadPicnicPurchaseHistory(client);
+    data.picnicPurchaseHistoryProducts = Array.from(purchaseHistory.values()).map((a) => ({
+      name: a.name,
+      brand: a.brand,
+      price: a.price,
+    }));
+    await client.cart.clearCart();
+
+    const session = {
+      remaining: groceryList,
+      addedItems: [],
+      failedItems: [],
+      purchaseHistory: serializePurchaseHistory(purchaseHistory),
+    };
+    const done = await processPicnicChunk(client, session);
+    data.picnicSyncSession = done ? null : { status: "syncing", ...session };
+    await saveData(data);
+
+    res.json({
+      success: true,
+      requires2FA: false,
+      done,
+      addedItems: session.addedItems,
+      failedItems: session.failedItems,
+      remainingCount: session.remaining.length,
+    });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
 });
 
-app.post("/api/picnic-verify-2fa", (req, res) => {
-  res.json({ success: false, error: "Picnic sync temporarily disabled during migration" });
+app.post("/api/picnic-verify-2fa", async (req, res) => {
+  const { code } = req.body || {};
+  if (!code) return res.json({ success: false, error: "Missing code" });
+
+  try {
+    const data = await loadData();
+    const pending = data.picnicSyncSession;
+    if (!pending || pending.status !== "pending_2fa") {
+      return res.json({ success: false, error: "No pending Picnic login. Please try again." });
+    }
+
+    const client = makePicnicClient(pending.pendingAuthKey);
+    await client.auth.verify2FACode(code);
+    data.picnicAuthKey = client.authKey;
+
+    await savePicnicDeliveryCosts(client, data);
+    const purchaseHistory = await loadPicnicPurchaseHistory(client);
+    data.picnicPurchaseHistoryProducts = Array.from(purchaseHistory.values()).map((a) => ({
+      name: a.name,
+      brand: a.brand,
+      price: a.price,
+    }));
+    await client.cart.clearCart();
+
+    const session = {
+      remaining: pending.remaining,
+      addedItems: [],
+      failedItems: [],
+      purchaseHistory: serializePurchaseHistory(purchaseHistory),
+    };
+    const done = await processPicnicChunk(client, session);
+    data.picnicSyncSession = done ? null : { status: "syncing", ...session };
+    await saveData(data);
+
+    res.json({
+      success: true,
+      requires2FA: false,
+      done,
+      addedItems: session.addedItems,
+      failedItems: session.failedItems,
+      remainingCount: session.remaining.length,
+    });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
 });
 
-app.post("/api/save-picnic-credentials", (req, res) => {
-  res.json({ success: false, error: "Picnic sync temporarily disabled during migration" });
+// Called in a loop by the frontend after picnic-verify-2fa until done:true.
+// No body needed - resumes from the session + auth key already saved.
+app.post("/api/picnic-sync-continue", async (req, res) => {
+  try {
+    const data = await loadData();
+    const session = data.picnicSyncSession;
+    if (!session || session.status !== "syncing" || !data.picnicAuthKey) {
+      return res.json({ success: false, error: "No sync in progress" });
+    }
+
+    const client = makePicnicClient(data.picnicAuthKey);
+    const working = {
+      remaining: session.remaining,
+      addedItems: session.addedItems,
+      failedItems: session.failedItems,
+      purchaseHistory: session.purchaseHistory,
+    };
+    const done = await processPicnicChunk(client, working);
+    data.picnicSyncSession = done ? null : { status: "syncing", ...working };
+    await saveData(data);
+
+    res.json({
+      success: true,
+      done,
+      addedItems: working.addedItems,
+      failedItems: working.failedItems,
+      remainingCount: working.remaining.length,
+    });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/save-picnic-credentials", async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res.json({ success: false, error: "Missing username or password" });
+    }
+    const data = await loadData();
+    data.picnicCredentials = { username, password };
+    await saveData(data);
+    res.json({ success: true });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
 });
 
 app.post("/api/purchase-history-auth", (req, res) => {
-  res.json({ success: false, error: "Picnic sync temporarily disabled during migration" });
+  res.json({ success: false, error: "Not implemented - use Load Purchase History from the Shopping tab" });
 });
 
 app.post("/api/purchase-history-verify-2fa", (req, res) => {
-  res.json({ success: false, error: "Picnic sync temporarily disabled during migration" });
+  res.json({ success: false, error: "Not implemented - use Load Purchase History from the Shopping tab" });
 });
 
 app.get("/api/purchase-history-cached", async (req, res) => {
-  res.json({ success: true, history: [] });
+  const data = await loadData();
+  res.json({ success: true, products: data.picnicPurchaseHistoryProducts || [] });
 });
 
 // ============================================================================

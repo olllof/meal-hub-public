@@ -2646,8 +2646,10 @@
  document.getElementById('unified2FACode').focus();
  showMessage('📱 SMS code sent to your phone', 'info');
  } else {
- // No 2FA required, start gathering data
- await runAllThreeOperations(email, password);
+ // No 2FA required - login already ran costs/history/first cart chunk.
+ document.getElementById('unifiedLoginForm').style.display = 'none';
+ document.getElementById('unifiedProgressDisplay').style.display = 'flex';
+ await handlePicnicSyncResult(result);
  }
  } else {
  showMessage('Login failed: ' + (result.error || 'Unknown error'), 'error');
@@ -2677,10 +2679,7 @@
  const response = await fetch('/api/picnic-verify-2fa', {
  method: 'POST',
  headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({
- sessionId: unifiedAuthContext.sessionId,
- code: code
- })
+ body: JSON.stringify({ code: code })
  });
 
  const result = await response.json();
@@ -2690,8 +2689,7 @@
  document.getElementById('unified2FAForm').style.display = 'none';
  document.getElementById('unifiedProgressDisplay').style.display = 'flex';
 
- // Run all three operations
- await runAllThreeOperations(unifiedAuthContext.email, unifiedAuthContext.password);
+ await handlePicnicSyncResult(result);
  } else {
  showMessage('Verification failed: ' + (result.error || 'Invalid code'), 'error');
  verifyBtn.disabled = false;
@@ -2704,73 +2702,52 @@
  }
  }
 
- async function runAllThreeOperations(email, password) {
- const progressDisplay = document.getElementById('unifiedProgressDisplay');
- progressDisplay.style.display = 'flex';
-
+ // Handles the response from picnic-start-sync (no-2FA branch) or
+ // picnic-verify-2fa: both already ran costs + purchase history + the
+ // first cart-sync chunk server-side. This just displays that, then
+ // loops picnic-sync-continue (small chunks, each a fresh request) until
+ // the whole shopping list has been processed - avoids ever risking one
+ // request running long enough to hit a serverless execution time limit.
+ async function handlePicnicSyncResult(result) {
  const costProgress = document.getElementById('costProgress');
  const picnicProgress = document.getElementById('picnicProgress');
  const historyProgress = document.getElementById('historyProgress');
 
- // Reset progress indicators
- costProgress.innerHTML = '⏳ Refreshing costs...';
- picnicProgress.innerHTML = '⏳ Adding to Picnic...';
- historyProgress.innerHTML = '⏳ Loading purchase history...';
-
- let results = {
- costsSuccess: false,
- picnicSuccess: false,
- historySuccess: false
- };
-
- try {
- // Operation 1: Refresh Costs
- try {
- await gatherCostsDirectly(email, password);
- results.costsSuccess = true;
  costProgress.innerHTML = '✅ Costs refreshed';
- } catch (error) {
- costProgress.innerHTML = '❌ Costs failed: ' + error.message;
- }
+ historyProgress.innerHTML = '✅ Purchase history loaded';
+ await loadCombinedCosts();
 
- // Operation 2: Auto-Add to Picnic
+ let addedCount = result.addedItems.length;
+ let failedCount = result.failedItems.length;
+ picnicProgress.innerHTML = `⏳ Adding to Picnic... ${addedCount + failedCount} done`;
+
+ let done = result.done;
+ while (!done) {
  try {
- await addItemsToPicnicDirectly(email, password);
- results.picnicSuccess = true;
- picnicProgress.innerHTML = '✅ Added to Picnic';
+ const response = await fetch('/api/picnic-sync-continue', { method: 'POST' });
+ const chunk = await response.json();
+ if (!chunk.success) {
+ picnicProgress.innerHTML = '❌ Picnic failed: ' + (chunk.error || 'Unknown error');
+ break;
+ }
+ addedCount = chunk.addedItems.length;
+ failedCount = chunk.failedItems.length;
+ picnicProgress.innerHTML = `⏳ Adding to Picnic... ${addedCount + failedCount} done`;
+ done = chunk.done;
  } catch (error) {
  picnicProgress.innerHTML = '❌ Picnic failed: ' + error.message;
+ break;
+ }
  }
 
- // Operation 3: Load Purchase History
- try {
- await loadPurchaseHistoryDirectly(email, password);
- results.historySuccess = true;
- historyProgress.innerHTML = '✅ Purchase history loaded';
- } catch (error) {
- historyProgress.innerHTML = '❌ History failed: ' + error.message;
+ if (done) {
+ picnicProgress.innerHTML = failedCount > 0
+ ? `✅ Added ${addedCount} items (${failedCount} not found)`
+ : `✅ Added all ${addedCount} items to Picnic`;
  }
 
- // Show completion message
- setTimeout(() => {
- const successCount = Object.values(results).filter(v => v).length;
- if (successCount === 3) {
- showMessage('✅ All data refreshed successfully!', 'success');
- } else if (successCount > 0) {
- showMessage(`⚠️ Completed ${successCount}/3 operations. Check the details above.`, 'warning');
- } else {
- showMessage('❌ All operations failed. Please try again.', 'error');
- }
-
- // Close modal after 3 seconds
- setTimeout(() => {
- closeUnifiedPicnicAuth();
- }, 2000);
- }, 1500);
-
- } catch (error) {
- showMessage('Unexpected error: ' + error.message, 'error');
- }
+ showMessage('✅ Picnic sync complete!', 'success');
+ setTimeout(() => closeUnifiedPicnicAuth(), 2500);
  }
 
  function resetUnifiedPicnicForm() {
@@ -2780,49 +2757,6 @@
  document.getElementById('unifiedProgressDisplay').style.display = 'none';
  document.getElementById('unifiedAuthButton').disabled = false;
  document.getElementById('unified2FAButton').disabled = false;
- }
-
- async function gatherCostsDirectly(email, password) {
- const response = await fetch('https://' + (window.location.host || '192.168.178.78:3000') + '/api/gather-costs', {
- method: 'POST',
- headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({ email, password })
- });
-
- const result = await response.json();
- if (!result.success) throw new Error(result.error || 'Failed to gather costs');
-
- await loadCombinedCosts();
- }
-
- async function addItemsToPicnicDirectly(email, password) {
- // This would call the actual add to picnic functionality
- // For now, we'll call the existing function but with credentials
- // The implementation depends on your existing Picnic sync logic
- const response = await fetch('https://' + (window.location.host || '192.168.178.78:3000') + '/api/add-to-picnic', {
- method: 'POST',
- headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({ email, password })
- });
-
- const result = await response.json();
- if (!result.success) throw new Error(result.error || 'Failed to add to Picnic');
- }
-
- async function loadPurchaseHistoryDirectly(email, password) {
- const response = await fetch('https://' + (window.location.host || '192.168.178.78:3000') + '/api/load-purchase-history', {
- method: 'POST',
- headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({ email, password })
- });
-
- const result = await response.json();
- if (!result.success) throw new Error(result.error || 'Failed to load purchase history');
-
- // Update UI if needed
- if (result.products) {
- window.purchaseHistoryData = result;
- }
  }
 
  async function openGatherCostsModal() {

@@ -43,6 +43,31 @@ function significantWords(text) {
   return normalizeWhitespace(text).split(" ").filter((w) => w.length > 1);
 }
 
+// Score search results by purchase history, Bio/local preference, price.
+// Shared canonical scorer - both server backends use this.
+function selectBestProduct(results, purchaseHistory) {
+  if (!results || results.length === 0) return null;
+
+  const scored = results.map((product) => {
+    let score = 0;
+    const name = (product.name || "").toLowerCase();
+    const brand = (product.brand || "").toLowerCase();
+
+    if (purchaseHistory && purchaseHistory.has && purchaseHistory.has(name)) {
+      score += 100;
+    }
+    if (name.includes("bio") || brand.includes("bio")) score += 10;
+    if (brand.includes("rewe") || brand.includes("rapunzel") || brand.includes("schär")) score += 8;
+    if (name.includes("natur") || name.includes("rein")) score += 5;
+    if (product.price) score += Math.max(0, 10 - product.price / 10);
+
+    return { product, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0].product;
+}
+
 // --- fuzzy matching against purchase history ---
 
 function levenshtein(a, b) {
@@ -173,6 +198,7 @@ module.exports = {
   smartProductSearch,
   buildFallbackQueries,
   findClosePurchaseHistoryMatch,
+  selectBestProduct,
   levenshtein,
   foldAccents,
   stripQuantities,
