@@ -582,6 +582,7 @@ function getDefaultData() {
     nextWeekMeals: [],
     shoppingList: [...BASELINE_ITEMS],
     extraItems: [],
+    itemQuantities: {},
     classics: [...CLASSICS],
     cookedMeals: [],
     receipts: [],
@@ -1020,6 +1021,65 @@ app.get("/api/shopping-list", async (req, res) => {
   }
 });
 
+// Item quantities. 1 is the default and isn't stored; only other values are
+// kept, keyed by lowercase item name. A baseline item set to 0 stays on the
+// list but is skipped when the list is sent to Picnic ("we have enough").
+function quantityKey(item) {
+  return String(item || "").trim().toLowerCase();
+}
+
+function getItemQuantity(data, item) {
+  const q = (data.itemQuantities || {})[quantityKey(item)];
+  return Number.isInteger(q) ? q : 1;
+}
+
+function setItemQuantity(data, item, quantity) {
+  if (!data.itemQuantities) data.itemQuantities = {};
+  const key = quantityKey(item);
+  if (quantity === 1) delete data.itemQuantities[key];
+  else data.itemQuantities[key] = quantity;
+}
+
+function dropItemQuantity(data, item) {
+  if (data.itemQuantities) delete data.itemQuantities[quantityKey(item)];
+}
+
+// Everything that should actually go into the Picnic cart.
+function itemsToOrder(data) {
+  return [...(data.shoppingList || []), ...(data.extraItems || [])].filter(
+    (item) => getItemQuantity(data, item) > 0
+  );
+}
+
+app.post("/api/item-quantity", async (req, res) => {
+  const { item, quantity, reset } = req.body || {};
+  try {
+    const data = await loadData();
+
+    if (reset) {
+      data.itemQuantities = {};
+    } else {
+      const name = String(item || "").trim();
+      if (!name) return res.status(400).json({ error: "Item is required" });
+      const qty = Number(quantity);
+      if (!Number.isInteger(qty) || qty < 0 || qty > 99) {
+        return res.status(400).json({ error: "Quantity must be a whole number from 0 to 99" });
+      }
+      const key = quantityKey(name);
+      const isBaseline = (data.shoppingList || []).some((i) => quantityKey(i) === key);
+      const isListed = isBaseline || (data.extraItems || []).some((i) => quantityKey(i) === key);
+      if (!isListed) return res.status(404).json({ error: "Item is not on the shopping list" });
+      // Only baseline items can be 0; a new item you don't want is just removed.
+      setItemQuantity(data, name, isBaseline ? qty : Math.max(qty, 1));
+    }
+
+    await saveData(data);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/shopping", async (req, res) => {
   let { action, item, oldName } = req.body;
   try {
@@ -1027,6 +1087,10 @@ app.post("/api/shopping", async (req, res) => {
 
     if (action === "rename") {
       const newItem = translateIngredient(item);
+
+      const oldQty = getItemQuantity(data, oldName);
+      dropItemQuantity(data, oldName);
+      if (oldQty !== 1) setItemQuantity(data, newItem, oldQty);
 
       const shoppingIndex = data.shoppingList.findIndex(i => i === oldName || i.toLowerCase() === oldName?.toLowerCase());
       if (shoppingIndex !== -1) data.shoppingList[shoppingIndex] = newItem;
@@ -1057,15 +1121,18 @@ app.post("/api/shopping", async (req, res) => {
       } else if (action === "remove") {
         data.shoppingList = data.shoppingList.filter((i) => i !== item);
         data.extraItems = data.extraItems.filter((i) => i !== item);
+        dropItemQuantity(data, item);
       } else if (action === "toggle-have") {
         data.shoppingList = data.shoppingList.filter((i) => i !== item);
         data.extraItems = data.extraItems.filter((i) => i !== item);
+        dropItemQuantity(data, item);
       } else if (action === "promote-to-baseline") {
         data.extraItems = data.extraItems.filter((i) => i.toLowerCase() !== itemLower);
         if (!existsCaseInsensitive(data.shoppingList)) data.shoppingList.push(item);
       } else if (action === "remove-from-baseline") {
         data.shoppingList = data.shoppingList.filter((i) => i.toLowerCase() !== itemLower);
         if (!existsCaseInsensitive(data.extraItems)) data.extraItems.unshift(item);
+        dropItemQuantity(data, item);
       }
     }
 
@@ -1948,9 +2015,13 @@ app.post("/api/picnic-start-sync", async (req, res) => {
       }
     }
 
-    const groceryList = [...(data.shoppingList || []), ...(data.extraItems || [])];
+    const groceryList = itemsToOrder(data);
     if (shouldSyncCart && groceryList.length === 0) {
-      return res.json({ success: false, error: "Shopping list is empty" });
+      const anyListed = (data.shoppingList || []).length + (data.extraItems || []).length > 0;
+      return res.json({
+        success: false,
+        error: anyListed ? "Every item is set to 0, so there is nothing to add" : "Shopping list is empty",
+      });
     }
 
     const client = makePicnicClient();

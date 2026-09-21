@@ -2619,28 +2619,60 @@
  });
  }
 
- function increaseQty(item) {
- try {
- let quantities = JSON.parse(localStorage.getItem('itemQuantities') || '{}');
- quantities[item] = (quantities[item] || 1) + 1;
- localStorage.setItem('itemQuantities', JSON.stringify(quantities));
- const el = document.getElementById(`qty-${escapeHtml(item)}`);
- if (el) el.textContent = quantities[item];
- } catch (e) {
- // ignore localStorage errors
+ function getItemQty(item) {
+ const q = (data.itemQuantities || {})[String(item).trim().toLowerCase()];
+ return Number.isInteger(q) ? q : 1;
  }
+
+ // Quantities live on the server so they sync between devices and so the
+ // Picnic sync can skip items set to 0. Saves go out one at a time, in order.
+ let qtySaveQueue = Promise.resolve();
+
+ function setItemQty(item, qty) {
+ const key = String(item).trim().toLowerCase();
+ if (!data.itemQuantities) data.itemQuantities = {};
+ if (qty === 1) delete data.itemQuantities[key];
+ else data.itemQuantities[key] = qty;
+
+ const el = document.getElementById(`qty-${escapeHtml(item)}`);
+ if (el) el.textContent = qty;
+
+ qtySaveQueue = qtySaveQueue.then(() => fetch('/api/item-quantity', {
+ method: 'POST',
+ headers: { 'Content-Type': 'application/json' },
+ body: JSON.stringify({ item, quantity: qty })
+ }).then(r => {
+ if (!r.ok) throw new Error('Save failed');
+ })).catch(err => {
+ console.error('Error saving quantity:', err);
+ showMessage('Could not save the amount', 'error');
+ });
+ }
+
+ function increaseQty(item) {
+ setItemQty(item, getItemQty(item) + 1);
  }
 
  function decreaseQty(item) {
- try {
- let quantities = JSON.parse(localStorage.getItem('itemQuantities') || '{}');
- const current = quantities[item] || 1;
- if (current > 1) {
- quantities[item] = current - 1;
- localStorage.setItem('itemQuantities', JSON.stringify(quantities));
- const el = document.getElementById(`qty-${escapeHtml(item)}`);
- if (el) el.textContent = quantities[item];
+ // Baseline items can go down to 0 (enough at home: stays on the list,
+ // isn't added to Picnic). New items stop at 1; remove them instead.
+ const isBaseline = (data.shoppingList || []).some(i => i.toLowerCase() === String(item).toLowerCase());
+ const current = getItemQty(item);
+ if (current > (isBaseline ? 0 : 1)) setItemQty(item, current - 1);
  }
+
+ // Amounts used to be kept in this browser only. Move any that are still
+ // here to the server once, then forget them.
+ function migrateLocalQuantities() {
+ try {
+ const stored = JSON.parse(localStorage.getItem('itemQuantities') || 'null');
+ if (!stored) return;
+ const listed = [...(data.shoppingList || []), ...(data.extraItems || [])].map(i => i.toLowerCase());
+ const moves = Object.entries(stored).filter(([name, qty]) => Number.isInteger(qty) && qty > 1 && listed.includes(name.toLowerCase()));
+ moves.forEach(([name, qty]) => {
+ if (getItemQty(name) === 1) setItemQty(name, qty);
+ });
+ qtySaveQueue.then(() => localStorage.removeItem('itemQuantities'));
  } catch (e) {
  // ignore localStorage errors
  }
@@ -2716,7 +2748,7 @@
  }
 
  function syncToPicnic() {
- const items = [...(data.shoppingList || []), ...(data.extraItems || [])];
+ const items = [...(data.shoppingList || []), ...(data.extraItems || [])].filter(item => getItemQty(item) > 0);
  if (items.length === 0) {
  showMessage('No items to sync', 'error');
  return;
@@ -3295,44 +3327,28 @@
  document.getElementById('mealsNeededPopup').style.display = 'none';
  }
 
- function clearShoppingList() {
- if (confirm('Clear shopping list? (New items will be removed, baseline items reset to 0)')) {
- // Remove all new items
- const extraItems = data.extraItems || [];
- extraItems.forEach(item => {
- fetch('/api/shopping', {
+ async function clearShoppingList() {
+ if (!confirm('Clear shopping list? (New items will be removed, baseline item amounts reset to 1)')) return;
+ const post = (url, body) => fetch(url, {
  method: 'POST',
  headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({ action: 'remove', item })
- });
- });
+ body: JSON.stringify(body)
+ }).then(r => r.json());
 
- // Set baseline items to quantity 0
  try {
- let quantities = JSON.parse(localStorage.getItem('itemQuantities') || '{}');
- const baselineItems = data.shoppingList || [];
- baselineItems.forEach(item => {
- quantities[item] = 0;
- });
- localStorage.setItem('itemQuantities', JSON.stringify(quantities));
- // Update display
- baselineItems.forEach(item => {
- const el = document.getElementById(`qty-${escapeHtml(item)}`);
- if (el) el.textContent = 0;
- });
- } catch (e) {
- // ignore localStorage errors
+ // One request at a time: they all rewrite the same saved list
+ for (const item of [...(data.extraItems || [])]) {
+ await post('/api/shopping', { action: 'remove', item });
  }
+ // Baseline amounts go back to the default of 1
+ data = await post('/api/item-quantity', { reset: true });
+ render();
 
  // Clear order meals when shopping list is cleared
- fetch('/api/order-meals', {
- method: 'POST',
- headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({ action: 'clear' })
- }).then(r => r.json()).then(updatedData => {
- data = updatedData;
+ data = await post('/api/order-meals', { action: 'clear' });
  render();
- });
+ } catch (err) {
+ console.error('Error clearing shopping list:', err);
  }
  }
 
@@ -3738,17 +3754,11 @@
 
  shoppingList.innerHTML = html;
 
- // Restore quantities
- try {
- const quantities = JSON.parse(localStorage.getItem('itemQuantities') || '{}');
+ // Show quantities
  [...baselineItems, ...extraItems].forEach(item => {
- const qty = quantities[item] || 1;
  const el = document.getElementById(`qty-${escapeHtml(item)}`);
- if (el) el.textContent = qty;
+ if (el) el.textContent = getItemQty(item);
  });
- } catch (e) {
- // ignore localStorage errors
- }
  } else {
  shoppingList.innerHTML = '<div class="empty-state">Shopping list empty</div>';
  }
@@ -4042,6 +4052,7 @@
  // Initial load
  fetch('/api/data').then(r => r.json()).then(d => {
  data = d;
+ migrateLocalQuantities();
  render();
  // Load costs on init too, in case the WebSocket never connects
  // (e.g. on serverless hosts that don't support WebSockets)
