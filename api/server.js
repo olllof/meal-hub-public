@@ -1521,7 +1521,7 @@ function pruneRecipeLines(data) {
 // Adds a recipe's ingredient lines to New Items and remembers exactly which
 // lines this meal is responsible for, so removing the meal later removes only
 // those (and never something the user added by hand or another meal needs).
-function addRecipeIngredientsToShoppingList(data, meal, ingredients) {
+function addRecipeIngredientsToShoppingList(data, meal, cleanLines) {
   if (!data.recipeShoppingLines) data.recipeShoppingLines = {};
   removeRecipeLinesForMeal(data, meal);
   const ownedByOthers = new Set();
@@ -1531,7 +1531,7 @@ function addRecipeIngredientsToShoppingList(data, meal, ingredients) {
 
   const lines = [];
   const seen = new Set();
-  ingredients.flatMap((raw) => toShoppingLines(raw)).forEach((line) => {
+  cleanLines.forEach((line) => {
     const key = line.toLowerCase();
     if (!line || seen.has(key)) return;
     seen.add(key);
@@ -1578,7 +1578,16 @@ app.post("/api/add-recipe-url", async (req, res) => {
 
     const nameFound = !!(scraped.success && scraped.title);
     const title = (nameFound ? scraped.title : titleFromUrlSlug(recipeUrl)).slice(0, 120);
-    const ingredients = scraped.success ? scraped.ingredients : [];
+    // Just the items - no amounts or prep notes - in German, deduplicated.
+    const seenLines = new Set();
+    const ingredients = (scraped.success ? scraped.ingredients : [])
+      .flatMap((raw) => toShoppingLines(raw))
+      .filter((line) => {
+        const key = line.toLowerCase();
+        if (!line || seenLines.has(key)) return false;
+        seenLines.add(key);
+        return true;
+      });
 
     // Load after the (slow) scrape so we never write back stale data.
     const data = await loadData();
