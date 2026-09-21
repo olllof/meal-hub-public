@@ -875,6 +875,7 @@ app.post("/api/meals", async (req, res) => {
     } else if (action === "clear") {
       data.orderMeals = [];
       data.extraItems = [];
+      data.cookedMeals = [];
     }
 
     await saveData(data);
@@ -893,6 +894,9 @@ app.post("/api/update-weekly-menu", async (req, res) => {
     const data = await loadData();
     data.orderMeals = meals;
     data.nextWeekMeals = [];
+    // A new week starts fresh: nothing is crossed out yet. (This used to
+    // carry over, so a meal cooked last week showed crossed out again.)
+    data.cookedMeals = [];
     data.lastWeeklyRefresh = new Date().toISOString();
     syncShoppingListWithMeals(data);
     pruneRecipeLines(data);
