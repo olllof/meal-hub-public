@@ -429,6 +429,21 @@ const INGREDIENT_TRANSLATIONS = {
   "White Wine": "Weißwein",
   "Red Wine": "Rotwein",
   "Beer": "Bier",
+  "Butter Beans": "Butterbohnen",
+  "Tomato Puree": "Tomatenmark",
+  "Tomato Purée": "Tomatenmark",
+  "Spanish Onion": "Zwiebel",
+  "Flat-leaf Parsley": "Petersilie",
+  "Greek Olive Oil": "Olivenöl",
+  "Ketchup": "Ketchup",
+  "Bread Crumbs": "Semmelbrösel",
+  "Breadcrumbs": "Semmelbrösel",
+  "Yellow Onion": "Zwiebel",
+  "Smoked Paprika": "Paprikapulver geräuchert",
+  "Feta Cheese": "Feta",
+  "Zucchinis": "Zucchini",
+  "Mozzarella Cheese": "Mozzarella",
+  "Sea Salt": "Meersalz",
   "Chicken Stock": "Hühnerbrühe",
   "Beef Stock": "Rinderbrühe",
   "Vegetable Stock": "Gemüsebrühe",
@@ -575,6 +590,7 @@ function getDefaultData() {
     picnicAuthKey: null,
     picnicSyncSession: null,
     picnicPurchaseHistoryProducts: [],
+    recipeShoppingLines: {},
     scrapedMeals: {},
     scrapedMealUrls: {},
     costCache: { totals: null, stores: null, lastUpdated: null },
@@ -646,14 +662,14 @@ function cleanIngredient(ingredient) {
   ];
 
   let quantities = [];
-  const quantityPattern = /\b(\d+[\d\s.\/\-xX]*(?:tbsp|tsp|g|ml|l|kg|oz|cup|cups|lbs?|lb)|(?:tbsp|tsp|g|ml|l|kg|oz|cup|cups|lbs?|lb)\b)/gi;
+  const quantityPattern = /\b(\d+[\d\s.\/\-xX]*(?:tbsp|tsp|g|ml|l|kg|oz|cup|cups|lbs?|lb)\b|(?:tbsp|tsp|g|ml|l|kg|oz|cup|cups|lbs?|lb)\b)/gi;
   let match;
   while ((match = quantityPattern.exec(ingredient)) !== null) {
     quantities.push(match[0].trim());
   }
 
   let cleanedText = ingredient;
-  cleanedText = cleanedText.replace(/\b(\d+[\d\s.\/\-xX]*(?:tbsp|tsp|g|ml|l|kg|oz|cup|cups|lbs?|lb)|(?:tbsp|tsp|g|ml|l|kg|oz|cup|cups|lbs?|lb)\b)/gi, ' ').trim();
+  cleanedText = cleanedText.replace(/\b(\d+[\d\s.\/\-xX]*(?:tbsp|tsp|g|ml|l|kg|oz|cup|cups|lbs?|lb)\b|(?:tbsp|tsp|g|ml|l|kg|oz|cup|cups|lbs?|lb)\b)/gi, ' ').trim();
 
   const wordsToRemove = new RegExp(`\\b(${descriptiveWords.join('|')})\\b`, 'gi');
   cleanedText = cleanedText.replace(wordsToRemove, ' ').trim();
@@ -755,9 +771,12 @@ function buildIngredientToMealsMap(orderMeals, scrapedMeals = {}) {
   orderMeals.forEach(meal => {
     const ingredients = getMealIngredients(meal, scrapedMeals);
     ingredients.forEach(ing => {
-      const ingLower = ing.toLowerCase();
-      if (!map[ingLower]) map[ingLower] = [];
-      if (!map[ingLower].includes(meal)) map[ingLower].push(meal);
+      // Register both the ingredient as written and the shopping-list line
+      // it becomes, so lines added from scraped recipes still match here.
+      new Set([ing.toLowerCase(), ...toShoppingLines(ing).map(l => l.toLowerCase())]).forEach(key => {
+        if (!map[key]) map[key] = [];
+        if (!map[key].includes(meal)) map[key].push(meal);
+      });
     });
   });
   return map;
@@ -876,6 +895,7 @@ app.post("/api/update-weekly-menu", async (req, res) => {
     data.nextWeekMeals = [];
     data.lastWeeklyRefresh = new Date().toISOString();
     syncShoppingListWithMeals(data);
+    pruneRecipeLines(data);
     await saveData(data);
     res.json(data);
   } catch (err) {
@@ -915,6 +935,7 @@ app.post("/api/next-week-meals", async (req, res) => {
       data.nextWeekMeals.push(meal);
     } else if (action === "remove") {
       data.nextWeekMeals = data.nextWeekMeals.filter((m) => m !== meal);
+      removeRecipeLinesForMeal(data, meal);
     } else if (action === "clear") {
       data.nextWeekMeals = [];
     }
@@ -1246,78 +1267,385 @@ app.post("/api/save-scraped-meal", async (req, res) => {
   }
 });
 
-app.post("/api/scrape-recipe", async (req, res) => {
-  const { url } = req.body;
-  if (!url) return res.json({ success: false, error: "No URL provided" });
+// ============================================================================
+// RECIPE URL SCRAPING
+//
+// Most recipe sites embed the recipe as schema.org JSON-LD (the same data
+// Google reads for recipe cards), which carries the real dish name and a
+// clean ingredient array. That's parsed first; the older HTML heuristics only
+// run for pages that don't provide it.
+// ============================================================================
 
+function decodeHtmlEntities(text) {
+  if (!text) return "";
+  const named = {
+    amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
+    ndash: "–", mdash: "—", rsquo: "’", lsquo: "‘",
+    ldquo: "“", rdquo: "”", frac12: "½", frac14: "¼",
+    frac34: "¾", deg: "°",
+  };
+  const fromCode = (code) => {
+    try { return String.fromCodePoint(code); } catch (e) { return ""; }
+  };
+  return String(text)
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => fromCode(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => fromCode(parseInt(dec, 10)))
+    .replace(/&([a-z0-9]+);/gi, (match, name) => (named[name.toLowerCase()] !== undefined ? named[name.toLowerCase()] : match))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isPrivateHost(hostname) {
+  const h = hostname.toLowerCase();
+  return (
+    h === "localhost" || h === "0.0.0.0" || h === "::1" || h.startsWith("[") ||
+    h.endsWith(".local") || h.endsWith(".internal") ||
+    /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) ||
+    /^169\.254\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h)
+  );
+}
+
+function normalizeRecipeUrl(input) {
+  let raw = String(input || "").trim();
+  if (!raw || /\s/.test(raw)) return null;
+  if (!/^https?:\/\//i.test(raw)) raw = "https://" + raw;
+  let url;
+  try { url = new URL(raw); } catch (e) { return null; }
+  if (!["http:", "https:"].includes(url.protocol) || isPrivateHost(url.hostname)) return null;
+  return url.toString();
+}
+
+function findRecipeNode(html) {
+  const blocks = html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+  for (const block of blocks) {
+    let parsed;
+    try { parsed = JSON.parse(block[1].trim()); } catch (e) { continue; }
+    const stack = [parsed];
+    while (stack.length) {
+      const node = stack.pop();
+      if (Array.isArray(node)) { stack.push(...node); continue; }
+      if (!node || typeof node !== "object") continue;
+      const type = node["@type"];
+      if (type === "Recipe" || (Array.isArray(type) && type.includes("Recipe"))) return node;
+      if (node["@graph"]) stack.push(node["@graph"]);
+      if (node.mainEntity) stack.push(node.mainEntity);
+    }
+  }
+  return null;
+}
+
+// "Recipe Name - Site Name" / "Recipe Name | Site Name" -> "Recipe Name"
+function cleanPageTitle(title) {
+  const decoded = decodeHtmlEntities(title.replace(/<[^>]*>/g, " "));
+  const parts = decoded.split(/\s+[|–—-]\s+/);
+  return (parts.length > 1 ? parts[0] : decoded).trim();
+}
+
+function pageTitleFallback(html) {
+  const meta =
+    html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i) ||
+    html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i);
+  if (meta) return cleanPageTitle(meta[1]);
+  const h1 = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  if (h1 && cleanPageTitle(h1[1])) return cleanPageTitle(h1[1]);
+  const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (titleTag) return cleanPageTitle(titleTag[1]);
+  return null;
+}
+
+// Older, looser extraction for pages without usable JSON-LD.
+function scrapeIngredientsHeuristic(html) {
+  let ingredients = [];
+
+  const germanMatch = html.match(/Zutaten[\s\S]*?<ul[^>]*>([\s\S]*?)<\/ul>/i);
+  if (germanMatch) {
+    const liMatches = germanMatch[1].match(/<li[^>]*>([^<]+)<\/li>/gi);
+    if (liMatches) ingredients = liMatches.map((m) => m.replace(/<[^>]*>/g, "").trim());
+  }
+
+  if (ingredients.length === 0) {
+    const divMatches = html.match(/<(?:div|li)[^>]*class="[^"]*ingredient[^"]*"[^>]*>([\s\S]*?)<\/(?:div|li)>/gi);
+    if (divMatches) {
+      ingredients = divMatches.map((m) => m.replace(/<[^>]*>/g, " ").trim()).filter((i) => i.length > 2);
+    }
+  }
+
+  if (ingredients.length === 0) {
+    const bulletPattern = /[▢☐□✓✔•\-*]\s*([^<\n]*?(?:g|ml|l|EL|TL|cup|Gramm|Liter|Teelöffel|Esslöffel)[^<\n]*)/gi;
+    for (const match of html.matchAll(bulletPattern)) {
+      const ing = match[1].trim();
+      if (ing.length > 3 && ingredients.length < 25) ingredients.push(ing);
+    }
+  }
+
+  return ingredients
+    .map((ing) => decodeHtmlEntities(ing))
+    .filter((ing) => ing.length > 2 && ing.length < 150);
+}
+
+async function scrapeRecipeFromUrl(rawUrl) {
+  const url = normalizeRecipeUrl(rawUrl);
+  if (!url) return { success: false, error: "That doesn't look like a valid recipe link" };
+
+  let html;
   try {
     const response = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept-Language": "en,de;q=0.8",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(8000),
     });
-    const html = await response.text();
-
-    let title = "Recipe";
-    const h1Match = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
-    const metaTitleMatch = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/i);
-    if (h1Match) title = h1Match[1].trim();
-    else if (metaTitleMatch) title = metaTitleMatch[1].trim();
-
-    let ingredients = [];
-
-    const jsonLdMatches = html.matchAll(/"recipeIngredient"\s*:\s*"([^"]+)"/gi);
-    for (const match of jsonLdMatches) ingredients.push(match[1].trim());
-
-    if (ingredients.length === 0) {
-      const jsonLdArrayMatch = html.match(/"recipeIngredient"\s*:\s*\[([\s\S]*?)\]/);
-      if (jsonLdArrayMatch) {
-        const ingMatches = jsonLdArrayMatch[1].matchAll(/"([^"]+)"/g);
-        for (const match of ingMatches) ingredients.push(match[1].trim());
-      }
-    }
-
-    if (ingredients.length === 0) {
-      const germanMatch = html.match(/Zutaten[\s\S]*?<ul[^>]*>([\s\S]*?)<\/ul>/i);
-      if (germanMatch) {
-        const liMatches = germanMatch[1].match(/<li[^>]*>([^<]+)<\/li>/gi);
-        if (liMatches) ingredients = liMatches.map((m) => m.replace(/<[^>]*>/g, "").trim());
-      }
-    }
-
-    if (ingredients.length === 0) {
-      const divMatches = html.match(/<div[^>]*class="[^"]*ingredient[^"]*"[^>]*>([\s\S]*?)<\/div>/gi);
-      if (divMatches) {
-        ingredients = divMatches.map((m) => m.replace(/<[^>]*>/g, "").trim()).filter(i => i.length > 2);
-      }
-    }
-
-    if (ingredients.length === 0) {
-      const bulletPattern = /[▢☐□✓✔•\-*]\s*([^<\n]*?(?:g|ml|l|EL|TL|cup|Gramm|Liter|Teelöffel|Esslöffel)[^<\n]*)/gi;
-      const matches = html.matchAll(bulletPattern);
-      for (const match of matches) {
-        const ing = match[1].trim().replace(/^\s*-\s*/, "").trim();
-        if (ing.length > 3 && ingredients.length < 25) ingredients.push(ing);
-      }
-    }
-
-    if (ingredients.length === 0) {
-      const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
-      const ingredientPattern = /(\d+[\s\-]*(?:g|ml|l|cup|tbsp|tsp|oz|lb|kg|dl|cl|EL|TL|Gramm|Liter|Tasse|Esslöffel|Teelöffel)[^,.]*?[\w\s]+(?:,|\.|\n|$))/gi;
-      const matches = text.matchAll(ingredientPattern);
-      for (const match of matches) {
-        const ing = match[1].trim().replace(/[,.\n]*$/, "").trim();
-        if (ing.length > 3 && ingredients.length < 20) ingredients.push(ing);
-      }
-    }
-
-    ingredients = Array.from(new Set(
-      ingredients
-        .map((ing) => ing.replace(/^[\d\s\-–•*\(\)\[\]]+/, "").replace(/\(optional\)/i, "").replace(/^[–—-]+/, "").trim())
-        .filter((ing) => ing.length > 2 && ing.length < 150)
-    )).slice(0, 15);
-
-    res.json({ success: true, title, ingredients, count: ingredients.length });
+    if (!response.ok) return { success: false, url, error: `The recipe site responded with ${response.status}` };
+    html = await response.text();
   } catch (err) {
-    res.json({ success: false, error: err.message });
+    return { success: false, url, error: err.message };
+  }
+
+  let title = null;
+  let ingredients = [];
+
+  const recipe = findRecipeNode(html);
+  if (recipe) {
+    if (typeof recipe.name === "string") title = decodeHtmlEntities(recipe.name);
+    const raw = Array.isArray(recipe.recipeIngredient)
+      ? recipe.recipeIngredient
+      : typeof recipe.recipeIngredient === "string" ? [recipe.recipeIngredient] : [];
+    ingredients = raw.map((ing) => decodeHtmlEntities(String(ing))).filter((ing) => ing.length > 1);
+  }
+
+  if (!title) title = pageTitleFallback(html);
+  if (ingredients.length === 0) ingredients = scrapeIngredientsHeuristic(html);
+
+  const seen = new Set();
+  ingredients = ingredients.filter((ing) => {
+    const key = ing.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 60);
+
+  return { success: true, url, title: title || null, ingredients };
+}
+
+// Readable fallback name from the URL when the page gives us no title.
+function titleFromUrlSlug(url) {
+  try {
+    const parsed = new URL(url);
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const slug = decodeURIComponent(parts[parts.length - 1] || parsed.hostname.replace(/^www\./, ""));
+    const words = slug
+      .replace(/\.[a-z0-9]{2,5}$/i, "")
+      .replace(/[-_+]+/g, " ")
+      .replace(/\b\d{4,}\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return words ? words.charAt(0).toUpperCase() + words.slice(1) : parsed.hostname.replace(/^www\./, "");
+  } catch (e) {
+    return "Recipe";
+  }
+}
+
+// Recipe ingredient text ("2 (14-ounce) cans black beans, drained, rinsed")
+// boiled down to the item(s) that belong on a shopping list. Amounts and prep
+// notes stay in the recipe popup; the list just needs what to buy.
+const RECIPE_UNIT_WORDS =
+  "cups?|tablespoons?|teaspoons?|tbsp|tsp|tbs|ounces?|oz|pounds?|lbs?|lb|grams?|g|kilograms?|kg|" +
+  "milliliters?|ml|liters?|litres?|l|cans?|pinch(?:es)?|dash(?:es)?|handfuls?|slices?|pieces?|sticks?|" +
+  "packages?|packs?|bunch(?:es)?|sprigs?|heads?|large|medium|small|whole|ripe|fresh|big";
+const RECIPE_NUM = "[\\d\\u00BC-\\u00BE\\u2150-\\u215E]";
+
+// Words that describe how to prepare an ingredient rather than what it is.
+const RECIPE_PREP_WORDS = new Set([
+  "finely", "roughly", "coarsely", "thinly", "freshly", "peeled", "chopped", "sliced", "diced",
+  "minced", "grated", "crushed", "halved", "quartered", "drained", "rinsed", "torn", "shredded",
+  "beaten", "melted", "softened", "divided", "cooked", "toasted", "dried",
+]);
+const RECIPE_PREP_MARKER = /^(?:plus|to serve|to garnish|for serving|for garnish|to taste|to finish|skins? removed|or to taste|finely|roughly|coarsely|thinly|freshly|peeled|chopped|sliced|diced|minced|grated|crushed|halved|quartered|drained|rinsed|torn|shredded|beaten|melted|softened|divided)\b/i;
+
+// "Spanish onion finely chopped" -> "Spanish onion", but leaves
+// "finely chopped bell pepper" alone (nothing real comes before the note).
+function trimPrepNotes(text) {
+  const words = text.split(" ");
+  for (let i = 1; i < words.length; i++) {
+    if (!RECIPE_PREP_MARKER.test(words.slice(i).join(" "))) continue;
+    if (words.slice(0, i).some((w) => !RECIPE_PREP_WORDS.has(w.toLowerCase()))) {
+      return words.slice(0, i).join(" ");
+    }
+  }
+  return text;
+}
+
+function toShoppingLines(raw) {
+  let text = decodeHtmlEntities(raw)
+    .replace(/\([^)]*\)/g, " ")
+    .split(/[,;]/)[0]
+    .split(/\s[-\u2013\u2014]\s/)[0]
+    .replace(/\bextra[\s-]virgin\b/gi, "")
+    .replace(/\b(garlic)\s+cloves?\b/gi, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const amountRe = new RegExp(
+    "^(?:" + RECIPE_NUM + "[\\d\\u00BC-\\u00BE\\u2150-\\u215E/.,\\-\\u2013]*\\s*(?:(?:and|to|or)\\s+" + RECIPE_NUM + "[\\d\\u00BC-\\u00BE\\u2150-\\u215E/.,\\-\\u2013]*\\s*)*)", "i"
+  );
+  const unitRe = new RegExp("^(?:" + RECIPE_UNIT_WORDS + ")\\b\\.?\\s*", "i");
+  for (let i = 0; i < 5; i++) {
+    const next = text
+      .replace(/^(?:about|approximately|around)\s+/i, "")
+      .replace(amountRe, "")
+      .replace(unitRe, "")
+      .replace(/^of\s+/i, "")
+      .trim();
+    if (next === text) break;
+    text = next;
+  }
+
+  // "bread crumbs or oat flour" -> first option; "salt + pepper" -> two items
+  return text
+    .split(/\s+\+\s+/)
+    .map((part) => trimPrepNotes(part.split(/\s+or\s+/i)[0].trim()))
+    .filter((part) => part.length > 1)
+    .map((part) => translateIngredient(part));
+}
+
+function pruneRecipeLines(data) {
+  if (!data.recipeShoppingLines) return;
+  const active = new Set([...(data.nextWeekMeals || []), ...(data.orderMeals || [])]);
+  Object.keys(data.recipeShoppingLines).forEach((meal) => {
+    if (!active.has(meal)) delete data.recipeShoppingLines[meal];
+  });
+}
+
+// Adds a recipe's ingredient lines to New Items and remembers exactly which
+// lines this meal is responsible for, so removing the meal later removes only
+// those (and never something the user added by hand or another meal needs).
+function addRecipeIngredientsToShoppingList(data, meal, ingredients) {
+  if (!data.recipeShoppingLines) data.recipeShoppingLines = {};
+  removeRecipeLinesForMeal(data, meal);
+  const ownedByOthers = new Set();
+  Object.entries(data.recipeShoppingLines).forEach(([otherMeal, lines]) => {
+    if (otherMeal !== meal) lines.forEach((line) => ownedByOthers.add(line.toLowerCase()));
+  });
+
+  const lines = [];
+  const seen = new Set();
+  ingredients.flatMap((raw) => toShoppingLines(raw)).forEach((line) => {
+    const key = line.toLowerCase();
+    if (!line || seen.has(key)) return;
+    seen.add(key);
+    if (data.shoppingList.some((i) => i.toLowerCase() === key)) return; // already a baseline item
+    const inExtras = data.extraItems.some((i) => i.toLowerCase() === key);
+    if (!inExtras) {
+      data.extraItems.push(line);
+      lines.push(line);
+    } else if (ownedByOthers.has(key)) {
+      lines.push(line); // shared with another planned recipe
+    }
+  });
+  data.recipeShoppingLines[meal] = lines;
+}
+
+function removeRecipeLinesForMeal(data, meal) {
+  if (!data.recipeShoppingLines || !data.recipeShoppingLines[meal]) return;
+  const lines = data.recipeShoppingLines[meal];
+  delete data.recipeShoppingLines[meal];
+  pruneRecipeLines(data);
+  const stillNeeded = new Set();
+  Object.values(data.recipeShoppingLines).forEach((ls) => ls.forEach((l) => stillNeeded.add(l.toLowerCase())));
+  const drop = new Set(lines.map((l) => l.toLowerCase()).filter((l) => !stillNeeded.has(l)));
+  data.extraItems = data.extraItems.filter((i) => !drop.has(i.toLowerCase()));
+}
+
+app.post("/api/scrape-recipe", async (req, res) => {
+  const { url } = req.body || {};
+  if (!url) return res.json({ success: false, error: "No URL provided" });
+  const result = await scrapeRecipeFromUrl(url);
+  if (!result.success) return res.json(result);
+  res.json({ success: true, title: result.title || "Recipe", ingredients: result.ingredients, count: result.ingredients.length });
+});
+
+// Adds a recipe link to Plan Upcoming Week under the dish's real name, with
+// its ingredients. `replace` swaps out an existing entry (e.g. a raw URL that
+// was saved as the meal name before this existed).
+app.post("/api/add-recipe-url", async (req, res) => {
+  const { url, replace } = req.body || {};
+  try {
+    const scraped = await scrapeRecipeFromUrl(url);
+    const recipeUrl = scraped.url || normalizeRecipeUrl(url);
+    if (!recipeUrl) return res.json({ success: false, error: "That doesn't look like a valid recipe link" });
+
+    const nameFound = !!(scraped.success && scraped.title);
+    const title = (nameFound ? scraped.title : titleFromUrlSlug(recipeUrl)).slice(0, 120);
+    const ingredients = scraped.success ? scraped.ingredients : [];
+
+    // Load after the (slow) scrape so we never write back stale data.
+    const data = await loadData();
+    if (!data.nextWeekMeals) data.nextWeekMeals = [];
+    if (!data.scrapedMeals) data.scrapedMeals = {};
+    if (!data.scrapedMealUrls) data.scrapedMealUrls = {};
+
+    const list = data.nextWeekMeals;
+    const replaceIdx = replace ? list.indexOf(replace) : -1;
+    if (replaceIdx !== -1) {
+      if (list.includes(title) && list[replaceIdx] !== title) list.splice(replaceIdx, 1);
+      else list[replaceIdx] = title;
+    } else if (!list.includes(title)) {
+      list.push(title);
+    }
+
+    data.scrapedMealUrls[title] = recipeUrl;
+    if (ingredients.length > 0) data.scrapedMeals[title] = ingredients;
+    if (replace && replace !== title) {
+      removeRecipeLinesForMeal(data, replace);
+      delete data.scrapedMeals[replace];
+      delete data.scrapedMealUrls[replace];
+    }
+    if (ingredients.length > 0) addRecipeIngredientsToShoppingList(data, title, ingredients);
+
+    await saveData(data);
+    res.json({ success: true, data, title, nameFound, ingredientCount: ingredients.length });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Renames a meal everywhere it's keyed by name.
+app.post("/api/rename-meal", async (req, res) => {
+  const oldName = String(req.body?.oldName ?? "");
+  const newName = String(req.body?.newName ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+  if (!oldName || !newName) return res.json({ success: false, error: "The name can't be empty" });
+
+  try {
+    const data = await loadData();
+    const listKeys = ["orderMeals", "nextWeekMeals", "classics", "cookedMeals"];
+    const mapKeys = ["scrapedMeals", "scrapedMealUrls", "recipeShoppingLines"];
+    const exists =
+      listKeys.some((k) => (data[k] || []).includes(oldName)) ||
+      mapKeys.some((k) => data[k] && Object.prototype.hasOwnProperty.call(data[k], oldName));
+    if (!exists) return res.json({ success: false, error: "Meal not found" });
+
+    if (newName !== oldName) {
+      listKeys.forEach((k) => {
+        const arr = data[k];
+        if (!Array.isArray(arr)) return;
+        const idx = arr.indexOf(oldName);
+        if (idx === -1) return;
+        if (arr.includes(newName)) arr.splice(idx, 1);
+        else arr[idx] = newName;
+      });
+      mapKeys.forEach((k) => {
+        const obj = data[k];
+        if (!obj || !Object.prototype.hasOwnProperty.call(obj, oldName)) return;
+        if (!Object.prototype.hasOwnProperty.call(obj, newName)) obj[newName] = obj[oldName];
+        delete obj[oldName];
+      });
+      await saveData(data);
+    }
+    res.json({ success: true, data, name: newName });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

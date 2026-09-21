@@ -954,6 +954,28 @@
  padding: 0;
  }
 
+ .ingredients-popup h3 .popup-rename-input {
+ flex: 1;
+ min-width: 0;
+ width: 100%;
+ background: transparent;
+ border: none;
+ border-bottom: 1px solid #ffffff;
+ border-radius: 0;
+ color: #ffffff !important;
+ font: inherit;
+ letter-spacing: inherit;
+ text-transform: inherit;
+ text-align: center;
+ padding: 4px 0;
+ outline: none;
+ box-shadow: none;
+ resize: none;
+ overflow: hidden;
+ display: block;
+ line-height: inherit;
+ }
+
  .ingredients-popup input::placeholder,
  .meals-needed-popup input::placeholder,
  .receipt-modal input::placeholder {
@@ -1529,7 +1551,7 @@
  <div id="ingredientsPopup" class="popup-overlay" style="display: none;" onclick="closeIngredientsPopup()">
  <div class="ingredients-popup" onclick="event.stopPropagation()">
  <button class="close-popup" onclick="closeIngredientsPopup()">×</button>
- <h3 id="popupMealName"></h3>
+ <h3 id="popupMealName" title="Tap to rename" onclick="startPopupRename()" style="cursor: pointer;"></h3>
  <ul id="ingredientsList"></ul>
  <button class="btn-primary" id="searchRecipeBtn" onclick="searchRecipe(document.getElementById('popupMealName').textContent)" style="display: block; width: fit-content; margin: 20px auto 0;">Search Recipe</button>
  </div>
@@ -1734,11 +1756,14 @@
  connected ? 'connection-status' : 'connection-status offline';
  }
 
+ let messageTimer = null;
  function showMessage(text, type = 'success') {
  const msg = document.getElementById('message');
  msg.textContent = text;
  msg.className = `message ${type}`;
- setTimeout(() => {
+ // Restart the timer so an earlier message can't clear a newer one early.
+ clearTimeout(messageTimer);
+ messageTimer = setTimeout(() => {
  msg.textContent = '';
  msg.className = '';
  }, 3000);
@@ -2185,7 +2210,44 @@
  }
  }
 
+ function isRecipeUrl(text) {
+ const t = text.trim();
+ return /^(https?:\/\/|www\.)\S+$/i.test(t) || /^[a-z0-9-]+(\.[a-z0-9-]+)+\/\S+$/i.test(t);
+ }
+
+ // A pasted link is read server-side for the dish's real name and its
+ // ingredients, instead of being saved as a meal literally named after the URL.
+ function addRecipeFromUrl(url) {
+ showMessage('Reading recipe...', 'success');
+ fetch('/api/add-recipe-url', {
+ method: 'POST',
+ headers: { 'Content-Type': 'application/json' },
+ body: JSON.stringify({ url })
+ }).then(r => r.json()).then(result => {
+ if (!result.success) {
+ showMessage(result.error || 'Could not add that recipe', 'error');
+ return;
+ }
+ data = result.data;
+ render();
+ if (!result.nameFound) {
+ showMessage(`Added "${result.title}". Couldn't read the recipe name, tap the name to change it`, 'success');
+ } else if (result.ingredientCount === 0) {
+ showMessage(`Added "${result.title}". Couldn't find its ingredients`, 'success');
+ } else {
+ showMessage(`Added "${result.title}" with ${result.ingredientCount} ingredients`, 'success');
+ }
+ }).catch(err => {
+ console.error('Error adding recipe URL:', err);
+ showMessage('Error adding recipe', 'error');
+ });
+ }
+
  function addNextWeekMealByName(mealName) {
+ if (isRecipeUrl(mealName)) {
+ addRecipeFromUrl(mealName);
+ return;
+ }
  if (mealName.length > 0) {
  fetch('/api/next-week-meals', {
  method: 'POST',
@@ -2345,6 +2407,83 @@
 
  function saveScrapedIngredients(scraped) {
  localStorage.setItem('scrapedIngredients', JSON.stringify(scraped));
+ }
+
+ let popupRenameActive = false;
+
+ // Turns the popup headline into an input; Enter or leaving the field saves,
+ // Escape cancels.
+ function startPopupRename() {
+ if (popupRenameActive) return;
+ const heading = document.getElementById('popupMealName');
+ const current = heading.textContent;
+ popupRenameActive = true;
+
+ const input = document.createElement('textarea');
+ input.rows = 1;
+ input.value = current;
+ input.maxLength = 120;
+ input.className = 'popup-rename-input';
+ input.setAttribute('aria-label', 'Meal name');
+ // Grows with the text so long names wrap like the headline does.
+ const fit = () => { input.style.height = 'auto'; input.style.height = input.scrollHeight + 'px'; };
+ input.addEventListener('input', fit);
+ heading.textContent = '';
+ heading.appendChild(input);
+ fit();
+ input.focus();
+ input.select();
+
+ let finished = false;
+ const finish = (save) => {
+ if (finished) return;
+ finished = true;
+ popupRenameActive = false;
+ const next = input.value.replace(/\s+/g, ' ').trim();
+ if (!save || !next || next === current) {
+ heading.textContent = current;
+ return;
+ }
+ renameMeal(current, next);
+ };
+ input.addEventListener('keydown', (e) => {
+ if (e.key === 'Enter') {
+ e.preventDefault();
+ finish(true);
+ } else if (e.key === 'Escape') {
+ e.preventDefault();
+ e.stopPropagation();
+ finish(false);
+ }
+ });
+ input.addEventListener('blur', () => finish(true));
+ }
+
+ function renameMeal(oldName, newName) {
+ const heading = document.getElementById('popupMealName');
+ heading.textContent = newName;
+ fetch('/api/rename-meal', {
+ method: 'POST',
+ headers: { 'Content-Type': 'application/json' },
+ body: JSON.stringify({ oldName, newName })
+ }).then(r => r.json()).then(result => {
+ if (!result.success) {
+ heading.textContent = oldName;
+ showMessage(result.error || 'Could not rename', 'error');
+ return;
+ }
+ if (mealIngredientsCache[oldName]) {
+ mealIngredientsCache[newName] = mealIngredientsCache[oldName];
+ delete mealIngredientsCache[oldName];
+ }
+ data = result.data;
+ render();
+ showIngredientsPopup(result.name);
+ showMessage(`Renamed to "${result.name}"`, 'success');
+ }).catch(() => {
+ heading.textContent = oldName;
+ showMessage('Could not rename', 'error');
+ });
  }
 
  function showIngredientsPopup(meal) {
