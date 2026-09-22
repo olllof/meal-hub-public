@@ -986,11 +986,48 @@
  .ingredients-popup .btn-primary,
  .meals-needed-popup .btn-primary,
  .receipt-modal .btn-primary,
+ .confirm-modal .btn-primary,
  .ingredients-popup .btn-secondary,
  .meals-needed-popup .btn-secondary,
- .receipt-modal .btn-secondary {
+ .receipt-modal .btn-secondary,
+ .confirm-modal .btn-secondary {
  color: #ffffff !important;
  background: transparent !important;
+ }
+
+ .confirm-modal {
+ position: fixed;
+ top: 50%;
+ left: 50%;
+ transform: translate(-50%, -50%);
+ background: #0C472A;
+ border: none;
+ padding: 30px;
+ border-radius: 0;
+ z-index: 1000;
+ max-width: 380px;
+ width: 90%;
+ box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+ text-align: center;
+ }
+
+ .confirm-modal p {
+ font-size: 0.95rem;
+ color: #ffffff !important;
+ margin: 0 0 25px 0;
+ line-height: 1.4;
+ }
+
+ .confirm-modal-buttons {
+ display: flex;
+ justify-content: center;
+ gap: 10px;
+ }
+
+ .confirm-modal .btn-primary,
+ .confirm-modal .btn-secondary {
+ border: 1px solid rgba(255,255,255,0.5);
+ padding: 8px 20px;
  }
 
  .ingredients-popup .tab-btn,
@@ -1657,6 +1694,17 @@
  </div>
 
  <!-- Add Costs Modal -->
+ <!-- Confirm Modal (replaces window.confirm) -->
+ <div id="confirmModal" class="popup-overlay" style="display: none;" onclick="closeConfirmModal(false)">
+ <div class="confirm-modal" onclick="event.stopPropagation()">
+ <p id="confirmModalMessage"></p>
+ <div class="confirm-modal-buttons">
+ <button class="btn-secondary" onclick="closeConfirmModal(false)">Cancel</button>
+ <button class="btn-primary" id="confirmModalOk" onclick="closeConfirmModal(true)">OK</button>
+ </div>
+ </div>
+ </div>
+
  <div id="receiptModal" class="popup-overlay" style="display: none;" onclick="closeReceiptModal()">
  <div class="receipt-modal" onclick="event.stopPropagation()">
  <button class="close-popup" onclick="closeReceiptModal()">×</button>
@@ -2941,9 +2989,9 @@
  }
  picnicProgress.style.display = 'block';
 
- let addedCount = result.addedItems.length;
- let failedCount = result.failedItems.length;
- picnicProgress.innerHTML = `Adding to Picnic... ${addedCount + failedCount} done`;
+ let addedItems = result.addedItems;
+ let failedItems = result.failedItems;
+ picnicProgress.innerHTML = `Adding to Picnic... ${addedItems.length + failedItems.length} done`;
 
  let done = result.done;
  while (!done) {
@@ -2954,9 +3002,9 @@
  picnicProgress.innerHTML = 'Picnic failed: ' + (chunk.error || 'Unknown error');
  break;
  }
- addedCount = chunk.addedItems.length;
- failedCount = chunk.failedItems.length;
- picnicProgress.innerHTML = `Adding to Picnic... ${addedCount + failedCount} done`;
+ addedItems = chunk.addedItems;
+ failedItems = chunk.failedItems;
+ picnicProgress.innerHTML = `Adding to Picnic... ${addedItems.length + failedItems.length} done`;
  done = chunk.done;
  } catch (error) {
  picnicProgress.innerHTML = 'Picnic failed: ' + error.message;
@@ -2965,9 +3013,22 @@
  }
 
  if (done) {
- picnicProgress.innerHTML = failedCount > 0
- ? `Added ${addedCount} items (${failedCount} not found)`
- : `Added all ${addedCount} items to Picnic`;
+ // Items that made it into the cart are done - take them off the
+ // shopping list. Anything Picnic couldn't find is left in place.
+ try {
+ data = await fetch('/api/picnic-sync-complete', {
+ method: 'POST',
+ headers: { 'Content-Type': 'application/json' },
+ body: JSON.stringify({ addedItems })
+ }).then(r => r.json());
+ render();
+ } catch (error) {
+ console.error('Error clearing synced items:', error);
+ }
+
+ picnicProgress.innerHTML = failedItems.length > 0
+ ? `Added ${addedItems.length} items (${failedItems.length} not found - still on your list)`
+ : `Added all ${addedItems.length} items to Picnic - list cleared`;
  }
 
  showMessage('Picnic sync complete!', 'success');
@@ -3327,8 +3388,28 @@
  document.getElementById('mealsNeededPopup').style.display = 'none';
  }
 
+ // Custom confirm modal (styled like the other popups) in place of
+ // window.confirm, which renders as an ugly native browser dialog.
+ let confirmModalResolve = null;
+
+ function showConfirm(message, confirmLabel) {
+ document.getElementById('confirmModalMessage').textContent = message;
+ document.getElementById('confirmModalOk').textContent = confirmLabel || 'OK';
+ document.getElementById('confirmModal').style.display = 'block';
+ return new Promise(resolve => { confirmModalResolve = resolve; });
+ }
+
+ function closeConfirmModal(result) {
+ document.getElementById('confirmModal').style.display = 'none';
+ if (confirmModalResolve) {
+ confirmModalResolve(!!result);
+ confirmModalResolve = null;
+ }
+ }
+
  async function clearShoppingList() {
- if (!confirm('Clear shopping list? (New items will be removed, baseline item amounts reset to 1)')) return;
+ const ok = await showConfirm('Clear shopping list? (New items will be removed, baseline item amounts reset to 1)', 'Clear');
+ if (!ok) return;
  const post = (url, body) => fetch(url, {
  method: 'POST',
  headers: { 'Content-Type': 'application/json' },
@@ -3842,8 +3923,9 @@
  });
  }
 
- function deleteReceipt(index) {
- if (confirm('Delete this receipt?')) {
+ async function deleteReceipt(index) {
+ const ok = await showConfirm('Delete this receipt?', 'Delete');
+ if (!ok) return;
  fetch('/api/receipts', {
  method: 'POST',
  headers: { 'Content-Type': 'application/json' },
@@ -3861,7 +3943,6 @@
  console.error('Error deleting receipt:', err);
  showMessage('Error deleting receipt', 'error');
  });
- }
  }
 
  function formatDateConsistent(dateStr) {
@@ -4018,8 +4099,9 @@
  document.getElementById('picnicCostsContainer').style.display = 'block';
  }
 
- function deletePicnicCost(index) {
- if (confirm('Delete this picnic cost?')) {
+ async function deletePicnicCost(index) {
+ const ok = await showConfirm('Delete this picnic cost?', 'Delete');
+ if (!ok) return;
  fetch('/api/picnic-costs', {
  method: 'POST',
  headers: { 'Content-Type': 'application/json' },
@@ -4038,7 +4120,6 @@
  console.error('Error deleting picnic cost:', err);
  showMessage('Error deleting picnic cost', 'error');
  });
- }
  }
 
  // Override render to include receipts and picnic costs

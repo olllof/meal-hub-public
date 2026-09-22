@@ -1080,6 +1080,31 @@ app.post("/api/item-quantity", async (req, res) => {
   }
 });
 
+// Called once an "Auto-Add to Picnic" sync finishes: items that actually
+// made it into the cart come off the shopping list (a baseline item goes
+// back to its default amount of 1 rather than being removed). Items Picnic
+// couldn't find are left in place so they aren't silently forgotten.
+app.post("/api/picnic-sync-complete", async (req, res) => {
+  const { addedItems } = req.body || {};
+  try {
+    const data = await loadData();
+    const added = Array.isArray(addedItems) ? addedItems : [];
+    const addedKeys = new Set(added.map(quantityKey));
+
+    data.extraItems = (data.extraItems || []).filter((i) => !addedKeys.has(quantityKey(i)));
+    added.forEach((item) => {
+      const isBaseline = (data.shoppingList || []).some((i) => quantityKey(i) === quantityKey(item));
+      if (isBaseline) setItemQuantity(data, item, 1);
+      else dropItemQuantity(data, item);
+    });
+
+    await saveData(data);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/shopping", async (req, res) => {
   let { action, item, oldName } = req.body;
   try {
