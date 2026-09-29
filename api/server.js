@@ -1350,12 +1350,15 @@ app.get("/api/scraped-meal/:meal", async (req, res) => {
     if (!ingredients || ingredients.length === 0) {
       ingredients = MEAL_INGREDIENTS[meal];
     }
-    const recipeUrl = (data.scrapedMealUrls || {})[meal];
+    // A saved recipe URL is real even when the scrape came back with no
+    // ingredients (e.g. a site that blocks scraping) - the popup still
+    // needs it to show "View Recipe" and link to the real page.
+    const recipeUrl = (data.scrapedMealUrls || {})[meal] || null;
 
     if (ingredients && ingredients.length > 0) {
       res.json({ success: true, ingredients, recipeUrl });
     } else {
-      res.json({ success: false, ingredients: [], recipeUrl: null });
+      res.json({ success: false, ingredients: [], recipeUrl });
     }
   } catch (err) {
     res.status(500).json({ error: err.message });
