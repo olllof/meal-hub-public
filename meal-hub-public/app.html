@@ -1594,6 +1594,7 @@
  <input type="text" id="popupIngredientInput" placeholder="Add ingredient..." maxlength="200" onkeypress="if(event.key==='Enter'){event.preventDefault();addPopupIngredient();}">
  <button class="btn-primary" onclick="addPopupIngredient()" style="padding: 12px 16px;">Add</button>
  </div>
+ <button class="btn-primary" id="popupAddToWeekBtn" onclick="addPopupMealToNextWeek()" style="display: none; width: fit-content; margin: 20px auto 0;">+ Add to Plan Upcoming Week</button>
  <button class="btn-primary" id="searchRecipeBtn" onclick="searchRecipe(document.getElementById('popupMealName').textContent)" style="display: block; width: fit-content; margin: 20px auto 0;">Search Recipe</button>
  </div>
  </div>
@@ -2334,7 +2335,7 @@
  // ingredients, instead of being saved as a meal literally named after the URL.
  function addRecipeFromUrl(url) {
  showMessage('Reading recipe...', 'success');
- fetch('/api/add-recipe-url', {
+ return fetch('/api/add-recipe-url', {
  method: 'POST',
  headers: { 'Content-Type': 'application/json' },
  body: JSON.stringify({ url })
@@ -2360,11 +2361,10 @@
 
  function addNextWeekMealByName(mealName) {
  if (isRecipeUrl(mealName)) {
- addRecipeFromUrl(mealName);
- return;
+ return addRecipeFromUrl(mealName);
  }
  if (mealName.length > 0) {
- fetch('/api/next-week-meals', {
+ return fetch('/api/next-week-meals', {
  method: 'POST',
  headers: { 'Content-Type': 'application/json' },
  body: JSON.stringify({ action: 'add', meal: mealName })
@@ -2605,6 +2605,11 @@
  document.getElementById('popupMealName').textContent = meal;
  const list = document.getElementById('ingredientsList');
 
+ // Only meaningful for a meal that isn't already planned for next week
+ // (e.g. opened from Classics) - already-planned meals hide the button.
+ const alreadyPlanned = (data.nextWeekMeals || []).some(m => m.toLowerCase() === meal.toLowerCase());
+ document.getElementById('popupAddToWeekBtn').style.display = alreadyPlanned ? 'none' : 'block';
+
  // Check cache first (for recently added meals)
  if (mealIngredientsCache[meal]) {
  const ingredients = mealIngredientsCache[meal];
@@ -2670,6 +2675,20 @@
 
  function closeIngredientsPopup() {
  document.getElementById('ingredientsPopup').style.display = 'none';
+ }
+
+ // "+ Add to Plan Upcoming Week" button in the ingredients popup (shown for
+ // a meal - typically a Classic - that isn't already planned for next week).
+ function addPopupMealToNextWeek() {
+ const meal = document.getElementById('popupMealName').textContent.trim();
+ if (!meal) return;
+ const btn = document.getElementById('popupAddToWeekBtn');
+ btn.disabled = true;
+ Promise.resolve(addNextWeekMealByName(meal)).then(() => {
+ btn.style.display = 'none';
+ }).finally(() => {
+ btn.disabled = false;
+ });
  }
 
  // Typed in from the ingredients popup. Saved for this meal (so it shows up
@@ -3989,10 +4008,12 @@
  // Render classics
  const classicsList = document.getElementById('classicsList');
  if (data.classics?.length > 0) {
+ const plannedNextWeek = new Set((data.nextWeekMeals || []).map(m => m.toLowerCase()));
  classicsList.innerHTML = data.classics.map(meal => `
  <div class="meal-item" style="justify-content: space-between;">
  <span class="meal-name meal-clickable" style="cursor: pointer; flex: 1; order: 1;" data-meal="${escapeHtml(meal)}"> ${escapeHtml(meal)}</span>
- <button class="meal-remove" onclick="removeClassic('${escapeHtml(meal)}')" style="background: none; border: none; cursor: pointer; font-size: 0.9rem; padding: 4px 8px; color: #000000 !important; margin-left: auto; order: 2; flex-shrink: 0;">×</button>
+ ${plannedNextWeek.has(meal.toLowerCase()) ? '' : `<button class="meal-add" data-meal="${escapeHtml(meal)}" title="Add to Plan Upcoming Week" style="background: none; border: none; cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 4px 8px; color: #000000 !important; order: 2; flex-shrink: 0;">+</button>`}
+ <button class="meal-remove" onclick="removeClassic('${escapeHtml(meal)}')" style="background: none; border: none; cursor: pointer; font-size: 0.9rem; padding: 4px 8px; color: #000000 !important; order: 3; flex-shrink: 0;">×</button>
  </div>
  `).join('');
 
@@ -4000,6 +4021,13 @@
  document.querySelectorAll('#classicsList .meal-clickable').forEach(el => {
  el.addEventListener('click', () => {
  showIngredientsPopup(el.getAttribute('data-meal'));
+ });
+ });
+
+ // Quick-add straight to Plan Upcoming Week, no need to open the popup
+ document.querySelectorAll('#classicsList .meal-add').forEach(el => {
+ el.addEventListener('click', () => {
+ addNextWeekMealByName(el.getAttribute('data-meal'));
  });
  });
  } else {
