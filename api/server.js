@@ -1670,6 +1670,48 @@ function removeRecipeLinesForMeal(data, meal) {
   data.extraItems = data.extraItems.filter((i) => !drop.has(i.toLowerCase()));
 }
 
+// Lets a meal's ingredients be typed in by hand from the ingredients popup,
+// not just scraped from a recipe URL. Cleaned the same way scraped
+// ingredients are (amounts/units stripped, translated), appended to
+// whatever's already saved for this meal, put on the shopping list, and
+// tracked under recipeShoppingLines so removing the meal later removes just
+// these lines.
+app.post("/api/meal-ingredients", async (req, res) => {
+  const { meal, ingredients } = req.body || {};
+  const mealName = String(meal || "").trim();
+  const rawList = Array.isArray(ingredients) ? ingredients : [];
+  if (!mealName) return res.status(400).json({ error: "Meal is required" });
+  if (rawList.length === 0) return res.status(400).json({ error: "No ingredients provided" });
+
+  try {
+    const data = await loadData();
+
+    const newLines = rawList.flatMap((raw) => toShoppingLines(String(raw || "")));
+    if (newLines.length === 0) {
+      return res.status(400).json({ error: "Couldn't make sense of that ingredient" });
+    }
+
+    const merged = [...((data.scrapedMeals || {})[mealName] || [])];
+    const seen = new Set(merged.map((l) => l.toLowerCase()));
+    newLines.forEach((line) => {
+      const key = line.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(line);
+      }
+    });
+
+    if (!data.scrapedMeals) data.scrapedMeals = {};
+    data.scrapedMeals[mealName] = merged;
+    addRecipeIngredientsToShoppingList(data, mealName, merged);
+
+    await saveData(data);
+    res.json({ success: true, ingredients: merged, data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/scrape-recipe", async (req, res) => {
   const { url } = req.body || {};
   if (!url) return res.json({ success: false, error: "No URL provided" });

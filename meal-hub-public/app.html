@@ -1590,6 +1590,10 @@
  <button class="close-popup" onclick="closeIngredientsPopup()">×</button>
  <h3 id="popupMealName" title="Tap to rename" onclick="startPopupRename()" style="cursor: pointer;"></h3>
  <ul id="ingredientsList"></ul>
+ <div class="input-group" style="margin: 15px 0 0 0;">
+ <input type="text" id="popupIngredientInput" placeholder="Add ingredient..." maxlength="200" onkeypress="if(event.key==='Enter'){event.preventDefault();addPopupIngredient();}">
+ <button class="btn-primary" onclick="addPopupIngredient()" style="padding: 12px 16px;">Add</button>
+ </div>
  <button class="btn-primary" id="searchRecipeBtn" onclick="searchRecipe(document.getElementById('popupMealName').textContent)" style="display: block; width: fit-content; margin: 20px auto 0;">Search Recipe</button>
  </div>
  </div>
@@ -2631,7 +2635,7 @@
  .map(ing => `<li>${ing}</li>`)
  .join('');
  } else {
- list.innerHTML = '<li style="color: #000000 !important;">Add ingredients manually to shopping list</li>';
+ list.innerHTML = '<li style="color: rgba(0,0,0,0.5) !important;">No ingredients yet</li>';
  }
 
  // Update button based on recipe URL
@@ -2657,7 +2661,7 @@
  .map(ing => `<li>${ing}</li>`)
  .join('');
  } else {
- list.innerHTML = '<li style="color: #000000 !important;">Add ingredients manually to shopping list</li>';
+ list.innerHTML = '<li style="color: rgba(0,0,0,0.5) !important;">No ingredients yet</li>';
  }
  });
 
@@ -2666,6 +2670,53 @@
 
  function closeIngredientsPopup() {
  document.getElementById('ingredientsPopup').style.display = 'none';
+ }
+
+ // Typed in from the ingredients popup. Saved for this meal (so it shows up
+ // next time the popup is opened) and added to the shopping list, same as
+ // a scraped recipe's ingredients would be.
+ async function addPopupIngredient() {
+ const input = document.getElementById('popupIngredientInput');
+ const raw = input.value.trim();
+ if (!raw) return;
+ const meal = document.getElementById('popupMealName').textContent.trim();
+ if (!meal) return;
+
+ // A comma- or newline-separated paste adds more than one ingredient at once.
+ const ingredients = raw.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+
+ input.disabled = true;
+ try {
+ const result = await fetch('/api/meal-ingredients', {
+ method: 'POST',
+ headers: { 'Content-Type': 'application/json' },
+ body: JSON.stringify({ meal, ingredients })
+ }).then(r => r.json());
+
+ if (!result.success) {
+ showMessage(result.error || 'Could not add ingredient', 'error');
+ return;
+ }
+
+ mealIngredientsCache[meal] = result.ingredients;
+ document.getElementById('ingredientsList').innerHTML = result.ingredients
+ .map(ing => `<li>${escapeHtml(ing)}</li>`)
+ .join('');
+
+ data = result.data;
+ render();
+
+ input.value = '';
+ showMessage(
+ ingredients.length > 1 ? `${ingredients.length} ingredients added` : `"${ingredients[0]}" added`,
+ 'success'
+ );
+ } catch (error) {
+ showMessage('Could not add ingredient', 'error');
+ } finally {
+ input.disabled = false;
+ input.focus();
+ }
  }
 
  function searchRecipe(meal) {
