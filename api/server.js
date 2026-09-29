@@ -649,6 +649,15 @@ async function saveData(data) {
 // HELPERS
 // ============================================================================
 
+// JS's built-in \b only treats ASCII letters as "word" characters, so a
+// short unit or English word directly touching an accented one - "l" in
+// "lök", "g" in "gäss", "or" in "ör..." - reads as a real boundary and
+// gets matched/stripped as if it stood alone. These are boundary-like but
+// Unicode-aware (any letter/number counts as a word character); use with
+// the "u" flag.
+const UB_BEFORE = "(?<![\\p{L}\\p{N}])";
+const UB_AFTER = "(?![\\p{L}\\p{N}])";
+
 function cleanIngredient(ingredient) {
   const descriptiveWords = [
     'large', 'medium', 'small', 'extra', 'generous', 'handful', 'pinch',
@@ -663,17 +672,21 @@ function cleanIngredient(ingredient) {
     'in', 'total', 'approximately', 'about', 'around', 'are', 'also', 'with'
   ];
 
+  const quantityUnits = "tbsp|tsp|g|ml|l|kg|oz|cup|cups|lbs?|lb";
   let quantities = [];
-  const quantityPattern = /\b(\d+[\d\s.\/\-xX]*(?:tbsp|tsp|g|ml|l|kg|oz|cup|cups|lbs?|lb)\b|(?:tbsp|tsp|g|ml|l|kg|oz|cup|cups|lbs?|lb)\b)/gi;
+  const quantityPattern = new RegExp(
+    UB_BEFORE + "(\\d+[\\d\\s.\\/\\-xX]*(?:" + quantityUnits + ")" + UB_AFTER + "|(?:" + quantityUnits + ")" + UB_AFTER + ")",
+    "giu"
+  );
   let match;
   while ((match = quantityPattern.exec(ingredient)) !== null) {
     quantities.push(match[0].trim());
   }
 
   let cleanedText = ingredient;
-  cleanedText = cleanedText.replace(/\b(\d+[\d\s.\/\-xX]*(?:tbsp|tsp|g|ml|l|kg|oz|cup|cups|lbs?|lb)\b|(?:tbsp|tsp|g|ml|l|kg|oz|cup|cups|lbs?|lb)\b)/gi, ' ').trim();
+  cleanedText = cleanedText.replace(quantityPattern, ' ').trim();
 
-  const wordsToRemove = new RegExp(`\\b(${descriptiveWords.join('|')})\\b`, 'gi');
+  const wordsToRemove = new RegExp(UB_BEFORE + `(${descriptiveWords.join('|')})` + UB_AFTER, 'giu');
   cleanedText = cleanedText.replace(wordsToRemove, ' ').trim();
   cleanedText = cleanedText.replace(/\([^)]*\)/g, ' ').trim();
   cleanedText = cleanedText.split(';')[0].trim();
@@ -713,7 +726,7 @@ function translateIngredient(ingredient) {
     const engPattern = eng.toLowerCase();
     const resultLower = result.toLowerCase();
     if (resultLower.includes(engPattern)) {
-      const regex = new RegExp(`\\b${eng.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+      const regex = new RegExp(UB_BEFORE + eng.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + UB_AFTER, 'giu');
       result = result.replace(regex, ger);
     }
   }
@@ -726,6 +739,27 @@ function translateIngredient(ingredient) {
 // Used only as a fallback when the curated INGREDIENT_TRANSLATIONS
 // dictionary has no entry, so common items stay fast/offline and only
 // unusual ones pay for a network round trip.
+// Detects the language of a batch of pasted/typed text so it can be
+// translated from the right source language (mirrors what a scraped
+// recipe page's own language tag gives us). Needs enough text to be
+// reliable - a single short word ("mjölk") gets misdetected fairly often,
+// but several ingredient lines together detect reliably in practice.
+async function detectTextLanguage(text) {
+  const trimmed = (text || "").trim();
+  if (trimmed.length < 20) return null;
+  try {
+    const response = await fetch(
+      `https://api.mymemory.translated.net/get?q=${encodeURIComponent(trimmed.slice(0, 500))}&langpair=autodetect|de`,
+      { signal: AbortSignal.timeout(4000) }
+    );
+    const result = await response.json();
+    const lang = result?.responseData?.detectedLanguage;
+    return lang && /^[a-z]{2}$/i.test(lang) ? lang.toLowerCase() : null;
+  } catch (err) {
+    return null;
+  }
+}
+
 async function translateToGermanFallback(text, sourceLang = "en") {
   try {
     const response = await fetch(
@@ -736,7 +770,10 @@ async function translateToGermanFallback(text, sourceLang = "en") {
     const translated = result?.responseData?.translatedText;
     const quality = result?.responseData?.match;
     if (translated && quality >= 0.5) {
-      return translated.replace(/[.!?]+$/, "").trim();
+      const cleaned = translated.replace(/[.!?]+$/, "").trim();
+      // MyMemory often returns German nouns lowercase ("butter", "öle");
+      // German capitalizes the first word of a noun phrase like this.
+      return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
     }
   } catch (err) {
     console.log("MyMemory translation fallback failed:", err.message);
@@ -1644,7 +1681,7 @@ function cleanShoppingLineParts(raw) {
   const amountRe = new RegExp(
     "^(?:" + RECIPE_NUM + "[\\d\\u00BC-\\u00BE\\u2150-\\u215E/.,\\-\\u2013]*\\s*(?:(?:and|to|or)\\s+" + RECIPE_NUM + "[\\d\\u00BC-\\u00BE\\u2150-\\u215E/.,\\-\\u2013]*\\s*)*)", "i"
   );
-  const unitRe = new RegExp("^(?:" + RECIPE_UNIT_WORDS + ")\\b\\.?\\s*", "i");
+  const unitRe = new RegExp("^(?:" + RECIPE_UNIT_WORDS + ")" + UB_AFTER + "\\.?\\s*", "iu");
   for (let i = 0; i < 5; i++) {
     const next = text
       .replace(/^(?:about|approximately|around)\s+/i, "")
@@ -1790,7 +1827,21 @@ app.post("/api/meal-ingredients", async (req, res) => {
     } else {
       const rawList = Array.isArray(ingredients) ? ingredients : [];
       if (rawList.length === 0) return res.status(400).json({ error: "No ingredients provided" });
-      const newLines = rawList.flatMap((raw) => toShoppingLines(String(raw || "")));
+      // A pasted batch (several lines at once) carries enough text to
+      // reliably detect its language, so it can be translated from that
+      // language instead of just the English-only dictionary - the same
+      // idea as a scraped recipe's own page language, just detected from
+      // the pasted text itself since there's no page to read a tag from.
+      const detectedLang = await detectTextLanguage(rawList.join(" "));
+      // One at a time, not Promise.all - MyMemory is a free, keyless API
+      // and a big pasted list firing a dozen translation calls at once
+      // risks getting some of them rate-limited (silently falling back to
+      // the untranslated text for those).
+      const newLines = [];
+      for (const raw of rawList) {
+        const lines = await toShoppingLinesAsync(String(raw || ""), detectedLang);
+        newLines.push(...lines);
+      }
       if (newLines.length === 0) {
         return res.status(400).json({ error: "Couldn't make sense of that ingredient" });
       }
