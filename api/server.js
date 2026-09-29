@@ -726,10 +726,10 @@ function translateIngredient(ingredient) {
 // Used only as a fallback when the curated INGREDIENT_TRANSLATIONS
 // dictionary has no entry, so common items stay fast/offline and only
 // unusual ones pay for a network round trip.
-async function translateToGermanFallback(text) {
+async function translateToGermanFallback(text, sourceLang = "en") {
   try {
     const response = await fetch(
-      `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|de`,
+      `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|de`,
       { signal: AbortSignal.timeout(4000) }
     );
     const result = await response.json();
@@ -1346,8 +1346,11 @@ app.get("/api/scraped-meal/:meal", async (req, res) => {
   const meal = decodeURIComponent(req.params.meal);
   try {
     const data = await loadData();
+    // Only fall back to the static database when this meal has no saved
+    // entry at all - an empty array means every ingredient was deliberately
+    // removed, and should stay empty rather than resurrect old ones.
     let ingredients = (data.scrapedMeals || {})[meal];
-    if (!ingredients || ingredients.length === 0) {
+    if (ingredients === undefined) {
       ingredients = MEAL_INGREDIENTS[meal];
     }
     // A saved recipe URL is real even when the scrape came back with no
@@ -1498,6 +1501,32 @@ function scrapeIngredientsHeuristic(html) {
     .filter((ing) => ing.length > 2 && ing.length < 150);
 }
 
+// The recipe's own language, so ingredients can be translated from the
+// right source language (schema.org's inLanguage, else <html lang>, else
+// the og:locale meta tag). Returns a plain 2-letter code, or null.
+function detectPageLanguage(html, recipe) {
+  const normalize = (raw) => {
+    if (!raw) return null;
+    const code = String(raw).trim().toLowerCase().split(/[-_]/)[0];
+    return /^[a-z]{2}$/.test(code) ? code : null;
+  };
+  if (recipe && typeof recipe.inLanguage === "string") {
+    const fromSchema = normalize(recipe.inLanguage);
+    if (fromSchema) return fromSchema;
+  }
+  const htmlLangMatch = html.match(/<html[^>]*\blang=["']?([a-zA-Z-]+)["']?/i);
+  if (htmlLangMatch) {
+    const fromHtml = normalize(htmlLangMatch[1]);
+    if (fromHtml) return fromHtml;
+  }
+  const localeMatch = html.match(/<meta[^>]*property=["']og:locale["'][^>]*content=["']([a-zA-Z_-]+)["']/i);
+  if (localeMatch) {
+    const fromLocale = normalize(localeMatch[1]);
+    if (fromLocale) return fromLocale;
+  }
+  return null;
+}
+
 async function scrapeRecipeFromUrl(rawUrl) {
   const url = normalizeRecipeUrl(rawUrl);
   if (!url) return { success: false, error: "That doesn't look like a valid recipe link" };
@@ -1541,7 +1570,9 @@ async function scrapeRecipeFromUrl(rawUrl) {
     return true;
   }).slice(0, 60);
 
-  return { success: true, url, title: title || null, ingredients };
+  const language = detectPageLanguage(html, recipe);
+
+  return { success: true, url, title: title || null, ingredients, language };
 }
 
 // Readable fallback name from the URL when the page gives us no title.
@@ -1568,7 +1599,10 @@ function titleFromUrlSlug(url) {
 const RECIPE_UNIT_WORDS =
   "cups?|tablespoons?|teaspoons?|tbsp|tsp|tbs|ounces?|oz|pounds?|lbs?|lb|grams?|g|kilograms?|kg|" +
   "milliliters?|ml|liters?|litres?|l|cans?|pinch(?:es)?|dash(?:es)?|handfuls?|slices?|pieces?|sticks?|" +
-  "packages?|packs?|bunch(?:es)?|sprigs?|heads?|large|medium|small|whole|ripe|fresh|big";
+  "packages?|packs?|bunch(?:es)?|sprigs?|heads?|large|medium|small|whole|ripe|fresh|big|" +
+  // Swedish units (dl/msk/tsk/krm etc.) - recipes come from Swedish sites too.
+  "dl|msk|tsk|krm|förp(?:ackning(?:ar)?)?|port(?:ion(?:er)?)?|st(?:ycken?)?|burk(?:ar)?|paket|" +
+  "klyft(?:a|or)?|skiv(?:a|or)?|nypa|knippe|kkm";
 const RECIPE_NUM = "[\\d\\u00BC-\\u00BE\\u2150-\\u215E]";
 
 // Words that describe how to prepare an ingredient rather than what it is.
@@ -1592,7 +1626,9 @@ function trimPrepNotes(text) {
   return text;
 }
 
-function toShoppingLines(raw) {
+// Strips amounts, units and prep notes down to the item name(s), still
+// untranslated. Shared by the sync and language-aware async versions below.
+function cleanShoppingLineParts(raw) {
   let text = decodeHtmlEntities(raw)
     .replace(/\([^)]*\)/g, " ")
     .split(/[,;]/)[0]
@@ -1621,8 +1657,26 @@ function toShoppingLines(raw) {
   return text
     .split(/\s+\+\s+/)
     .map((part) => trimPrepNotes(part.split(/\s+or\s+/i)[0].trim()))
-    .filter((part) => part.length > 1)
-    .map((part) => translateIngredient(part));
+    .filter((part) => part.length > 1);
+}
+
+function toShoppingLines(raw) {
+  return cleanShoppingLineParts(raw).map((part) => translateIngredient(part));
+}
+
+// Same cleanup, but for a recipe whose page declared a language other than
+// English/German: anything the curated dictionary doesn't already know is
+// translated from that language via the API instead of left as-is.
+async function toShoppingLinesAsync(raw, sourceLang) {
+  const parts = cleanShoppingLineParts(raw);
+  return Promise.all(parts.map(async (part) => {
+    const dictResult = translateIngredient(part);
+    if (dictResult !== part || !sourceLang || sourceLang === "en" || sourceLang === "de") {
+      return dictResult;
+    }
+    const apiResult = await translateToGermanFallback(part, sourceLang);
+    return apiResult || dictResult;
+  }));
 }
 
 function pruneRecipeLines(data) {
@@ -1679,37 +1733,63 @@ function removeRecipeLinesForMeal(data, meal) {
 // whatever's already saved for this meal, put on the shopping list, and
 // tracked under recipeShoppingLines so removing the meal later removes just
 // these lines.
+// action "add" (default): appends new ingredient(s), cleaned the same way
+// a scraped recipe's are. "remove"/"rename" edit one already on the list.
+// All three end by re-syncing this meal's shopping-list lines, so the
+// shopping list always matches whatever the popup shows for this meal.
 app.post("/api/meal-ingredients", async (req, res) => {
-  const { meal, ingredients } = req.body || {};
+  const { meal, ingredients, action, ingredient, newIngredient } = req.body || {};
   const mealName = String(meal || "").trim();
-  const rawList = Array.isArray(ingredients) ? ingredients : [];
   if (!mealName) return res.status(400).json({ error: "Meal is required" });
-  if (rawList.length === 0) return res.status(400).json({ error: "No ingredients provided" });
 
   try {
     const data = await loadData();
+    const current = [...((data.scrapedMeals || {})[mealName] || [])];
+    let updated;
 
-    const newLines = rawList.flatMap((raw) => toShoppingLines(String(raw || "")));
-    if (newLines.length === 0) {
-      return res.status(400).json({ error: "Couldn't make sense of that ingredient" });
+    if (action === "remove") {
+      const target = String(ingredient || "").trim().toLowerCase();
+      if (!target) return res.status(400).json({ error: "Ingredient is required" });
+      updated = current.filter((line) => line.toLowerCase() !== target);
+      if (updated.length === current.length) {
+        return res.status(404).json({ error: "That ingredient isn't on the list" });
+      }
+    } else if (action === "rename") {
+      const target = String(ingredient || "").trim().toLowerCase();
+      if (!target) return res.status(400).json({ error: "Ingredient is required" });
+      const idx = current.findIndex((line) => line.toLowerCase() === target);
+      if (idx === -1) return res.status(404).json({ error: "That ingredient isn't on the list" });
+      const cleaned = cleanShoppingLineParts(String(newIngredient || ""));
+      if (cleaned.length === 0) return res.status(400).json({ error: "Couldn't make sense of that ingredient" });
+      const replacement = translateIngredient(cleaned[0]);
+      updated = [...current];
+      updated.splice(idx, 1);
+      const dupIdx = updated.findIndex((line) => line.toLowerCase() === replacement.toLowerCase());
+      if (dupIdx === -1) updated.splice(idx, 0, replacement); // keep its position when it's not a duplicate
+    } else {
+      const rawList = Array.isArray(ingredients) ? ingredients : [];
+      if (rawList.length === 0) return res.status(400).json({ error: "No ingredients provided" });
+      const newLines = rawList.flatMap((raw) => toShoppingLines(String(raw || "")));
+      if (newLines.length === 0) {
+        return res.status(400).json({ error: "Couldn't make sense of that ingredient" });
+      }
+      updated = [...current];
+      const seen = new Set(updated.map((l) => l.toLowerCase()));
+      newLines.forEach((line) => {
+        const key = line.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          updated.push(line);
+        }
+      });
     }
 
-    const merged = [...((data.scrapedMeals || {})[mealName] || [])];
-    const seen = new Set(merged.map((l) => l.toLowerCase()));
-    newLines.forEach((line) => {
-      const key = line.toLowerCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        merged.push(line);
-      }
-    });
-
     if (!data.scrapedMeals) data.scrapedMeals = {};
-    data.scrapedMeals[mealName] = merged;
-    addRecipeIngredientsToShoppingList(data, mealName, merged);
+    data.scrapedMeals[mealName] = updated;
+    addRecipeIngredientsToShoppingList(data, mealName, updated);
 
     await saveData(data);
-    res.json({ success: true, ingredients: merged, data });
+    res.json({ success: true, ingredients: updated, data });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1740,9 +1820,15 @@ app.post("/api/add-recipe-url", async (req, res) => {
     const nameFound = !!(scraped.success && scraped.title);
     const title = (nameFound ? scraped.title : titleFromUrlSlug(recipeUrl)).slice(0, 120);
     // Just the items - no amounts or prep notes - in German, deduplicated.
+    // A page in Swedish, French, etc. gets each line translated from that
+    // language instead of the English-only dictionary passing it through.
+    const rawIngredients = scraped.success ? scraped.ingredients : [];
+    const linesPerIngredient = await Promise.all(
+      rawIngredients.map((raw) => toShoppingLinesAsync(raw, scraped.language))
+    );
     const seenLines = new Set();
-    const ingredients = (scraped.success ? scraped.ingredients : [])
-      .flatMap((raw) => toShoppingLines(raw))
+    const ingredients = linesPerIngredient
+      .flat()
       .filter((line) => {
         const key = line.toLowerCase();
         if (!line || seenLines.has(key)) return false;

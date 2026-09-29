@@ -926,10 +926,42 @@
  color: #000000 !important;
  }
 
- .ingredients-popup li:before {
- content: "* ";
+ .ingredients-popup li.ingredient-row {
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ gap: 8px;
+ }
+
+ .ingredients-popup li.ingredient-row.editing {
+ flex-direction: column;
+ align-items: stretch;
+ gap: 10px;
+ }
+
+ .ingredients-popup li.ingredient-row.editing .item-edit-input {
+ width: 100%;
+ box-sizing: border-box;
+ }
+
+ .ingredients-popup li.ingredient-row.editing .item-edit-buttons {
+ justify-content: flex-end;
+ }
+
+ .ingredient-text {
+ cursor: pointer;
+ flex: 1;
+ }
+
+ .ingredient-remove {
+ background: none;
+ border: none;
+ cursor: pointer;
+ font-size: 1rem;
+ line-height: 1;
+ padding: 4px 8px;
  color: #000000 !important;
- margin-right: 8px;
+ flex-shrink: 0;
  }
 
  .popup-overlay {
@@ -2603,9 +2635,38 @@
  });
  }
 
+ // Builds the ingredient rows: each one editable (click the text) and
+ // removable (the ×), both backed by /api/meal-ingredients so a change
+ // is saved for the meal, not just this one viewing of the popup.
+ function renderIngredientsList(ingredients) {
+ return ingredients.map(ing => `
+ <li class="ingredient-row" data-ingredient="${escapeHtml(ing)}">
+ <span class="ingredient-text">${escapeHtml(ing)}</span>
+ <button class="ingredient-remove" title="Remove" aria-label="Remove ${escapeHtml(ing)}">×</button>
+ </li>
+ `).join('');
+ }
+
+ function displayIngredients(meal, ingredients) {
+ mealIngredientsCache[meal] = ingredients;
+ const list = document.getElementById('ingredientsList');
+ list.innerHTML = ingredients.length > 0
+ ? renderIngredientsList(ingredients)
+ : '<li style="color: rgba(0,0,0,0.5) !important;">No ingredients yet</li>';
+ wireIngredientListEvents();
+ }
+
+ function wireIngredientListEvents() {
+ document.querySelectorAll('#ingredientsList .ingredient-row').forEach(row => {
+ const textEl = row.querySelector('.ingredient-text');
+ const removeBtn = row.querySelector('.ingredient-remove');
+ if (textEl) textEl.addEventListener('click', () => startEditPopupIngredient(row));
+ if (removeBtn) removeBtn.addEventListener('click', () => removePopupIngredient(row.dataset.ingredient));
+ });
+ }
+
  function showIngredientsPopup(meal) {
  document.getElementById('popupMealName').textContent = meal;
- const list = document.getElementById('ingredientsList');
 
  // Only meaningful for a meal that isn't already planned for next week
  // (e.g. opened from Classics) - already-planned meals hide the button.
@@ -2614,10 +2675,7 @@
 
  // Check cache first (for recently added meals)
  if (mealIngredientsCache[meal]) {
- const ingredients = mealIngredientsCache[meal];
- list.innerHTML = ingredients
- .map(ing => `<li>${ing}</li>`)
- .join('');
+ displayIngredients(meal, mealIngredientsCache[meal]);
  document.getElementById('ingredientsPopup').style.display = 'block';
  return;
  }
@@ -2631,19 +2689,12 @@
 
  if (result.success && result.ingredients && result.ingredients.length > 0) {
  ingredients = result.ingredients;
- mealIngredientsCache[meal] = ingredients;
  } else {
  // Fall back to hardcoded database
  ingredients = mealIngredientsDb[meal] || [];
  }
 
- if (ingredients.length > 0) {
- list.innerHTML = ingredients
- .map(ing => `<li>${ing}</li>`)
- .join('');
- } else {
- list.innerHTML = '<li style="color: rgba(0,0,0,0.5) !important;">No ingredients yet</li>';
- }
+ displayIngredients(meal, ingredients);
 
  // Update button based on recipe URL
  const btn = document.getElementById('searchRecipeBtn');
@@ -2662,14 +2713,7 @@
  })
  .catch(() => {
  // Fall back to hardcoded database if fetch fails
- const ingredients = mealIngredientsDb[meal] || [];
- if (ingredients.length > 0) {
- list.innerHTML = ingredients
- .map(ing => `<li>${ing}</li>`)
- .join('');
- } else {
- list.innerHTML = '<li style="color: rgba(0,0,0,0.5) !important;">No ingredients yet</li>';
- }
+ displayIngredients(meal, mealIngredientsDb[meal] || []);
  });
 
  document.getElementById('ingredientsPopup').style.display = 'block';
@@ -2677,6 +2721,83 @@
 
  function closeIngredientsPopup() {
  document.getElementById('ingredientsPopup').style.display = 'none';
+ }
+
+ function cancelPopupIngredientEdit() {
+ const meal = document.getElementById('popupMealName').textContent.trim();
+ displayIngredients(meal, mealIngredientsCache[meal] || []);
+ }
+
+ function startEditPopupIngredient(row) {
+ const oldText = row.dataset.ingredient;
+ row.classList.add('editing');
+ row.innerHTML = `
+ <input type="text" class="item-edit-input ingredient-edit-input" value="${escapeHtml(oldText)}" maxlength="120">
+ <div class="item-edit-buttons">
+ <button class="item-edit-btn ingredient-save-btn">Save</button>
+ <button class="item-edit-btn cancel ingredient-cancel-btn">Cancel</button>
+ </div>
+ `;
+ const input = row.querySelector('.ingredient-edit-input');
+ input.focus();
+ input.select();
+ const save = () => savePopupIngredientEdit(row, oldText);
+ row.querySelector('.ingredient-save-btn').addEventListener('click', save);
+ row.querySelector('.ingredient-cancel-btn').addEventListener('click', cancelPopupIngredientEdit);
+ input.addEventListener('keydown', (e) => {
+ if (e.key === 'Enter') {
+ e.preventDefault();
+ save();
+ } else if (e.key === 'Escape') {
+ cancelPopupIngredientEdit();
+ }
+ });
+ }
+
+ function savePopupIngredientEdit(row, oldText) {
+ const input = row.querySelector('.ingredient-edit-input');
+ const newText = input ? input.value.trim() : '';
+ if (!newText || newText === oldText) {
+ cancelPopupIngredientEdit();
+ return;
+ }
+ const meal = document.getElementById('popupMealName').textContent.trim();
+ fetch('/api/meal-ingredients', {
+ method: 'POST',
+ headers: { 'Content-Type': 'application/json' },
+ body: JSON.stringify({ meal, action: 'rename', ingredient: oldText, newIngredient: newText })
+ }).then(r => r.json()).then(result => {
+ if (!result.success) {
+ showMessage(result.error || 'Could not save that change', 'error');
+ cancelPopupIngredientEdit();
+ return;
+ }
+ displayIngredients(meal, result.ingredients);
+ data = result.data;
+ render();
+ }).catch(() => {
+ showMessage('Could not save that change', 'error');
+ cancelPopupIngredientEdit();
+ });
+ }
+
+ function removePopupIngredient(ingredientText) {
+ const meal = document.getElementById('popupMealName').textContent.trim();
+ if (!meal || !ingredientText) return;
+ fetch('/api/meal-ingredients', {
+ method: 'POST',
+ headers: { 'Content-Type': 'application/json' },
+ body: JSON.stringify({ meal, action: 'remove', ingredient: ingredientText })
+ }).then(r => r.json()).then(result => {
+ if (!result.success) {
+ showMessage(result.error || 'Could not remove that ingredient', 'error');
+ return;
+ }
+ displayIngredients(meal, result.ingredients);
+ data = result.data;
+ render();
+ showMessage(`"${ingredientText}" removed`, 'success');
+ }).catch(() => showMessage('Could not remove that ingredient', 'error'));
  }
 
  // "+ Add to Plan Upcoming Week" button in the ingredients popup (shown for
@@ -2711,7 +2832,7 @@
  const result = await fetch('/api/meal-ingredients', {
  method: 'POST',
  headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({ meal, ingredients })
+ body: JSON.stringify({ meal, action: 'add', ingredients })
  }).then(r => r.json());
 
  if (!result.success) {
@@ -2719,10 +2840,7 @@
  return;
  }
 
- mealIngredientsCache[meal] = result.ingredients;
- document.getElementById('ingredientsList').innerHTML = result.ingredients
- .map(ing => `<li>${escapeHtml(ing)}</li>`)
- .join('');
+ displayIngredients(meal, result.ingredients);
 
  data = result.data;
  render();
