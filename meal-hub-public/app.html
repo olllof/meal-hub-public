@@ -2866,6 +2866,34 @@
  });
  }
 
+ // Splits a paste into one raw string per ingredient. Real line breaks are
+ // the normal case, but depending on where a list was copied from, they
+ // don't always survive the paste - the whole thing can arrive as one
+ // line with the bullets/numbers still in it ("* flour * sugar * ...").
+ // When that happens, split right before each marker instead of on commas
+ // (a comma inside one item, like "salt, or more to taste", is that
+ // item's own text, not a separator between items).
+ function splitPastedIngredients(raw) {
+ raw = raw.trim();
+ if (!raw) return [];
+
+ let lines = raw.split(/\r\n|\r|\n/).map(s => s.trim()).filter(Boolean);
+
+ if (lines.length <= 1) {
+ const markerSplit = raw
+ .split(/(?:^|\s)(?=[-*•‣◦●]\s|\d+[.)]\s)/)
+ .map(s => s.trim())
+ .filter(Boolean);
+ if (markerSplit.length > 1) lines = markerSplit;
+ }
+
+ if (lines.length > 1) return lines;
+
+ // A single item with no markers: a comma-separated quick add still
+ // splits into separate items ("Milch, Zucker, Mehl").
+ return lines[0] ? lines[0].split(/,/).map(s => s.trim()).filter(Boolean) : [];
+ }
+
  // Typed in from the ingredients popup. Saved for this meal (so it shows up
  // next time the popup is opened) and added to the shopping list, same as
  // a scraped recipe's ingredients would be.
@@ -2876,16 +2904,7 @@
  const meal = document.getElementById('popupMealName').textContent.trim();
  if (!meal) return;
 
- // A pasted list (one ingredient per line, e.g. copied from a blocked
- // recipe site) adds each line as its own item. A single line with commas
- // ("Milch, Zucker, Mehl") still splits into separate items too - but a
- // comma inside one pasted line ("salt, or more to taste") is part of
- // that line's own text, not a separator, so it's left for the server's
- // usual cleanup to trim.
- const lines = raw.split(/\n/).map(s => s.trim()).filter(Boolean);
- const ingredients = lines.length > 1
- ? lines
- : lines[0].split(/,/).map(s => s.trim()).filter(Boolean);
+ const ingredients = splitPastedIngredients(raw);
 
  input.disabled = true;
  try {
