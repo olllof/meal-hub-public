@@ -1413,11 +1413,11 @@
  </header>
 
  <div class="tabs main-nav">
- <button class="tab-btn active" onclick="switchTab('week')" style="color: white;">Menu <span class="tab-badge" id="week-badge">0</span></button>
- <button class="tab-btn" onclick="switchTab('meals')" style="color: white;">Meals <span class="tab-badge" id="meals-badge">0</span></button>
- <button class="tab-btn" onclick="switchTab('shopping')" style="color: white;">Shopping <span class="tab-badge" id="shopping-badge">0</span></button>
- <button class="tab-btn" onclick="switchTab('costs')" style="color: white;">Costs</button>
- <button class="tab-btn" onclick="switchTab('classics')" style="color: white;">Classics <span class="tab-badge" id="classics-badge">0</span></button>
+ <button class="tab-btn active" data-tab="week" onclick="switchTab('week')" style="color: white;">Menu <span class="tab-badge" id="week-badge">0</span></button>
+ <button class="tab-btn" data-tab="meals" onclick="switchTab('meals')" style="color: white;">Meals <span class="tab-badge" id="meals-badge">0</span></button>
+ <button class="tab-btn" data-tab="shopping" onclick="switchTab('shopping')" style="color: white;">Shopping <span class="tab-badge" id="shopping-badge">0</span></button>
+ <button class="tab-btn" data-tab="costs" onclick="switchTab('costs')" style="color: white;">Costs</button>
+ <button class="tab-btn" data-tab="classics" onclick="switchTab('classics')" style="color: white;">Classics <span class="tab-badge" id="classics-badge">0</span></button>
  </div>
 
  <div class="connection-status" id="status"></div>
@@ -1811,14 +1811,39 @@
  }, 3000);
  }
 
- function switchTab(tab) {
+ // Each main tab gets its own URL (e.g. /meals), so it can be bookmarked,
+ // shared, or reopened with the browser's back/forward buttons.
+ const TAB_ROUTES = { week: '/menu', meals: '/meals', shopping: '/shopping', costs: '/costs', classics: '/classics' };
+ const ROUTE_TABS = { '/': 'week', '/menu': 'week', '/meals': 'meals', '/shopping': 'shopping', '/costs': 'costs', '/classics': 'classics' };
+
+ function tabFromPath(pathname) {
+ const path = pathname.replace(/\/+$/, '') || '/';
+ return ROUTE_TABS[path.toLowerCase()] || 'week';
+ }
+
+ function switchTab(tab, options) {
+ options = options || {};
  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
  document.getElementById(tab).classList.add('active');
- event.target.classList.add('active');
+ const navBtn = document.querySelector(`.main-nav .tab-btn[data-tab="${tab}"]`);
+ if (navBtn) navBtn.classList.add('active');
+
+ if (options.updateUrl !== false) {
+ const path = TAB_ROUTES[tab] || '/menu';
+ if (location.pathname !== path) {
+ history.pushState({ tab }, '', path);
+ }
+ }
 
  // Costs are loaded manually when user clicks "Gather Costs"
  }
+
+ // Browser back/forward
+ window.addEventListener('popstate', (event) => {
+ const tab = (event.state && event.state.tab) || tabFromPath(location.pathname);
+ switchTab(tab, { updateUrl: false });
+ });
 
  let currentCostsPeriod = 'month';
 
@@ -4122,6 +4147,10 @@
  await originalRender.call(this);
  renderReceipts();
  };
+
+ // Show whichever tab the URL points to (deep link / reload / back-forward)
+ switchTab(tabFromPath(location.pathname), { updateUrl: false });
+ history.replaceState({ tab: tabFromPath(location.pathname) }, '', TAB_ROUTES[tabFromPath(location.pathname)]);
 
  // Attach file input listener
  // Initial load
