@@ -1730,6 +1730,10 @@ app.post("/api/add-recipe-url", async (req, res) => {
     const recipeUrl = scraped.url || normalizeRecipeUrl(url);
     if (!recipeUrl) return res.json({ success: false, error: "That doesn't look like a valid recipe link" });
 
+    // Distinct from nameFound: whether the page could be read at all. A
+    // site that blocks the scraper (AllRecipes' Cloudflare wall, etc.)
+    // fails here even though the URL slug still gives us a usable name.
+    const pageReachable = scraped.success;
     const nameFound = !!(scraped.success && scraped.title);
     const title = (nameFound ? scraped.title : titleFromUrlSlug(recipeUrl)).slice(0, 120);
     // Just the items - no amounts or prep notes - in German, deduplicated.
@@ -1768,7 +1772,7 @@ app.post("/api/add-recipe-url", async (req, res) => {
     if (ingredients.length > 0) addRecipeIngredientsToShoppingList(data, title, ingredients);
 
     await saveData(data);
-    res.json({ success: true, data, title, nameFound, ingredientCount: ingredients.length });
+    res.json({ success: true, data, title, nameFound, pageReachable, ingredientCount: ingredients.length });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

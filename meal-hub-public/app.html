@@ -2346,7 +2346,9 @@
  }
  data = result.data;
  render();
- if (!result.nameFound) {
+ if (!result.pageReachable) {
+ showMessage(`Added "${result.title}" (name guessed from the link - the site blocked automatic reading). Add its ingredients below`, 'success');
+ } else if (!result.nameFound) {
  showMessage(`Added "${result.title}". Couldn't read the recipe name, tap the name to change it`, 'success');
  } else if (result.ingredientCount === 0) {
  showMessage(`Added "${result.title}". Couldn't find its ingredients`, 'success');
