@@ -1769,6 +1769,24 @@ app.post("/api/meal-ingredients", async (req, res) => {
       updated.splice(idx, 1);
       const dupIdx = updated.findIndex((line) => line.toLowerCase() === replacement.toLowerCase());
       if (dupIdx === -1) updated.splice(idx, 0, replacement); // keep its position when it's not a duplicate
+    } else if (action === "clean") {
+      // Re-runs the current cleanup rules (amounts, units, translations)
+      // over ingredients that are already saved. Lets a list scraped before
+      // a rule existed - Swedish units added later, say - get fixed
+      // without retyping each line by hand.
+      if (current.length === 0) return res.status(404).json({ error: "No ingredients to clean up" });
+      updated = [];
+      const seen = new Set();
+      current.forEach((line) => {
+        toShoppingLines(line).forEach((cleanedLine) => {
+          const key = cleanedLine.toLowerCase();
+          if (cleanedLine && !seen.has(key)) {
+            seen.add(key);
+            updated.push(cleanedLine);
+          }
+        });
+      });
+      if (updated.length === 0) updated = current;
     } else {
       const rawList = Array.isArray(ingredients) ? ingredients : [];
       if (rawList.length === 0) return res.status(400).json({ error: "No ingredients provided" });
@@ -1787,12 +1805,19 @@ app.post("/api/meal-ingredients", async (req, res) => {
       });
     }
 
+    const changed = JSON.stringify(current) !== JSON.stringify(updated);
+    if (action === "clean" && !changed) {
+      // Nothing left to tidy - skip the write so an already-clean list
+      // doesn't touch lastUpdated every time its popup is opened.
+      return res.json({ success: true, ingredients: current, changed: false, data });
+    }
+
     if (!data.scrapedMeals) data.scrapedMeals = {};
     data.scrapedMeals[mealName] = updated;
     addRecipeIngredientsToShoppingList(data, mealName, updated);
 
     await saveData(data);
-    res.json({ success: true, ingredients: updated, data });
+    res.json({ success: true, ingredients: updated, changed, data });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

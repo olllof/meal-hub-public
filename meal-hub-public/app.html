@@ -2719,12 +2719,17 @@
 
  if (result.success && result.ingredients && result.ingredients.length > 0) {
  ingredients = result.ingredients;
+ displayIngredients(meal, ingredients);
+ // Saved ingredients may predate a cleanup rule (e.g. a Swedish "dl"/
+ // "tsk" unit added after this was scraped) - quietly re-run the
+ // current rules over it once per view, and only touch the list if
+ // that actually changes something.
+ cleanupPopupIngredients(meal);
  } else {
  // Fall back to hardcoded database
  ingredients = mealIngredientsDb[meal] || [];
- }
-
  displayIngredients(meal, ingredients);
+ }
 
  // Update button based on recipe URL
  const btn = document.getElementById('searchRecipeBtn');
@@ -2751,6 +2756,23 @@
 
  function closeIngredientsPopup() {
  document.getElementById('ingredientsPopup').style.display = 'none';
+ }
+
+ function cleanupPopupIngredients(meal) {
+ fetch('/api/meal-ingredients', {
+ method: 'POST',
+ headers: { 'Content-Type': 'application/json' },
+ body: JSON.stringify({ meal, action: 'clean' })
+ }).then(r => r.json()).then(result => {
+ if (!result.success || !result.changed) return;
+ data = result.data;
+ render();
+ // Only touch what's on screen if this meal's popup is still the one open.
+ if (document.getElementById('popupMealName').textContent.trim() === meal) {
+ displayIngredients(meal, result.ingredients);
+ showMessage('Ingredient list cleaned up', 'success');
+ }
+ }).catch(() => {});
  }
 
  function cancelPopupIngredientEdit() {
