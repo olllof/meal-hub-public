@@ -591,6 +591,7 @@ function getDefaultData() {
     picnicAuthKey: null,
     picnicSyncSession: null,
     picnicPurchaseHistoryProducts: [],
+    lastPicnicSync: null,
     recipeShoppingLines: {},
     scrapedMeals: {},
     scrapedMealUrls: {},
@@ -1085,10 +1086,11 @@ app.post("/api/item-quantity", async (req, res) => {
 // back to its default amount of 1 rather than being removed). Items Picnic
 // couldn't find are left in place so they aren't silently forgotten.
 app.post("/api/picnic-sync-complete", async (req, res) => {
-  const { addedItems } = req.body || {};
+  const { addedItems, failedItems } = req.body || {};
   try {
     const data = await loadData();
     const added = Array.isArray(addedItems) ? addedItems : [];
+    const failed = Array.isArray(failedItems) ? failedItems : [];
     const addedKeys = new Set(added.map(quantityKey));
 
     data.extraItems = (data.extraItems || []).filter((i) => !addedKeys.has(quantityKey(i)));
@@ -1098,8 +1100,22 @@ app.post("/api/picnic-sync-complete", async (req, res) => {
       else dropItemQuantity(data, item);
     });
 
+    // Kept so "Open in new window" (and reopening that link later) can show
+    // exactly what did and didn't make it into the cart, even after this
+    // popup is closed.
+    data.lastPicnicSync = { addedItems: added, failedItems: failed, timestamp: new Date().toISOString() };
+
     await saveData(data);
     res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/last-picnic-sync", async (req, res) => {
+  try {
+    const data = await loadData();
+    res.json(data.lastPicnicSync || null);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -1566,6 +1566,12 @@
  </div>
  </div>
 
+ <!-- Picnic Sync Result (opened via "Open in new window" after Auto-Add to Picnic; not in the main nav) -->
+ <div id="picnicSyncResult" class="tab-content">
+ <h2 style="margin-top: 0; margin-bottom: 35px; font-size: 0.9rem; text-align: center; width: 100%; display: flex; align-items: center; justify-content: center; gap: 12px; line-height: 1.2;"><span style="line-height: 1.2; display: inline-flex; align-items: center; transform: translateY(6px);">*</span>Picnic Sync Result<span style="line-height: 1.2; display: inline-flex; align-items: center; transform: translateY(6px);">*</span></h2>
+ <div id="picnicSyncResultContent"></div>
+ </div>
+
  <div style="text-align: center; margin-top: 40px;">
  <a href="/logout" class="logout-btn">Sign out</a>
  </div>
@@ -1682,6 +1688,8 @@
  <div id="picnicProgress" style="font-size: 0.85rem; color: #000000;">Adding to Picnic...</div>
  <div id="historyProgress" style="font-size: 0.85rem; color: #000000;">Loading purchase history...</div>
  </div>
+ </div>
+ <div id="picnicSyncResults" style="display: none; margin-top: 15px; text-align: left; font-size: 0.85rem;"></div>
  </div>
  </div>
  </div>
@@ -1813,8 +1821,8 @@
 
  // Each main tab gets its own URL (e.g. /meals), so it can be bookmarked,
  // shared, or reopened with the browser's back/forward buttons.
- const TAB_ROUTES = { week: '/menu', meals: '/meals', shopping: '/shopping', costs: '/costs', classics: '/classics' };
- const ROUTE_TABS = { '/': 'week', '/menu': 'week', '/meals': 'meals', '/shopping': 'shopping', '/costs': 'costs', '/classics': 'classics' };
+ const TAB_ROUTES = { week: '/menu', meals: '/meals', shopping: '/shopping', costs: '/costs', classics: '/classics', picnicSyncResult: '/picnic-sync-result' };
+ const ROUTE_TABS = { '/': 'week', '/menu': 'week', '/meals': 'meals', '/shopping': 'shopping', '/costs': 'costs', '/classics': 'classics', '/picnic-sync-result': 'picnicSyncResult' };
 
  function tabFromPath(pathname) {
  const path = pathname.replace(/\/+$/, '') || '/';
@@ -1836,7 +1844,43 @@
  }
  }
 
+ if (tab === 'picnicSyncResult') {
+ loadPicnicSyncResultView();
+ }
+
  // Costs are loaded manually when user clicks "Gather Costs"
+ }
+
+ // Renders the standalone "Picnic Sync Result" page - what the "Open in
+ // new window" link (shown after Auto-Add to Picnic) opens. Its own URL,
+ // so it can be bookmarked or reopened later, right up until the next sync.
+ function renderPicnicSyncItemList(items) {
+ if (!items || items.length === 0) {
+ return '<p style="opacity: 0.6; margin: 0;">None</p>';
+ }
+ return items.map(item => `<div style="padding: 10px 0; border-bottom: 1px solid #1a1a1a;">${escapeHtml(item)}</div>`).join('');
+ }
+
+ async function loadPicnicSyncResultView() {
+ const el = document.getElementById('picnicSyncResultContent');
+ el.innerHTML = '<p>Loading...</p>';
+ try {
+ const sync = await fetch('/api/last-picnic-sync').then(r => r.json());
+ if (!sync) {
+ el.innerHTML = '<p>No Picnic sync yet.</p>';
+ return;
+ }
+ const when = new Date(sync.timestamp).toLocaleString();
+ el.innerHTML = `
+ <p style="opacity: 0.6; margin: 0 0 30px 0; text-align: center;">${escapeHtml(when)}</p>
+ <h3 style="font-size: 0.85rem; text-transform: uppercase; margin: 0 0 8px 0;">Added (${sync.addedItems.length})</h3>
+ ${renderPicnicSyncItemList(sync.addedItems)}
+ <h3 style="font-size: 0.85rem; text-transform: uppercase; margin: 30px 0 8px 0;">Not found (${sync.failedItems.length})</h3>
+ ${renderPicnicSyncItemList(sync.failedItems)}
+ `;
+ } catch (error) {
+ el.innerHTML = '<p>Could not load the last sync result.</p>';
+ }
  }
 
  // Browser back/forward
@@ -2854,6 +2898,9 @@
  loginForm.style.display = 'flex';
  twoFAForm.style.display = 'none';
  progressDisplay.style.display = 'none';
+ const syncResults = document.getElementById('picnicSyncResults');
+ syncResults.style.display = 'none';
+ syncResults.innerHTML = '';
 
  // Update button text based on trigger
  const buttonMap = {
@@ -3038,7 +3085,7 @@
  data = await fetch('/api/picnic-sync-complete', {
  method: 'POST',
  headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({ addedItems })
+ body: JSON.stringify({ addedItems, failedItems })
  }).then(r => r.json());
  render();
  } catch (error) {
@@ -3048,10 +3095,35 @@
  picnicProgress.innerHTML = failedItems.length > 0
  ? `Added ${addedItems.length} items (${failedItems.length} not found - still on your list)`
  : `Added all ${addedItems.length} items to Picnic - list cleared`;
+
+ showPicnicSyncResults(addedItems, failedItems);
+ showMessage('Picnic sync complete!', 'success');
+ // Left open (no auto-close) so there's time to actually check what
+ // was added before going to Picnic to order.
+ return;
  }
 
  showMessage('Picnic sync complete!', 'success');
  setTimeout(() => closeUnifiedPicnicAuth(), 2500);
+ }
+
+ // Shows exactly which items made it into the cart and which didn't, right
+ // in the sync popup, plus a link to the same result on its own URL (so it
+ // can be reopened in a new window, bookmarked, or checked again later).
+ function showPicnicSyncResults(addedItems, failedItems) {
+ const el = document.getElementById('picnicSyncResults');
+ el.innerHTML = `
+ <div style="margin-bottom: 16px;">
+ <strong>Added (${addedItems.length})</strong>
+ ${renderPicnicSyncItemList(addedItems)}
+ </div>
+ <div style="margin-bottom: 16px;">
+ <strong>Not found (${failedItems.length})</strong>
+ ${renderPicnicSyncItemList(failedItems)}
+ </div>
+ <button class="btn-secondary" onclick="window.open('/picnic-sync-result', '_blank')" style="width: 100%;">Open in new window</button>
+ `;
+ el.style.display = 'block';
  }
 
  function resetUnifiedPicnicForm() {
