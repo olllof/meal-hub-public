@@ -1630,6 +1630,9 @@ function trimPrepNotes(text) {
 // untranslated. Shared by the sync and language-aware async versions below.
 function cleanShoppingLineParts(raw) {
   let text = decodeHtmlEntities(raw)
+    // A pasted list carries its own markers ("* ", "- ", "• ", "1. ", "1) ")
+    // that aren't part of the ingredient itself.
+    .replace(/^\s*(?:[-*•‣◦●]+|\d+[.)])\s+/, "")
     .replace(/\([^)]*\)/g, " ")
     .split(/[,;]/)[0]
     .split(/\s[-\u2013\u2014]\s/)[0]
